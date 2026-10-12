@@ -949,7 +949,7 @@ const {sectionName, lineKey} = __m['names.js'];
 const KINDS = {
   trc: 'TRC km-wise result page', tampSect: 'Sectional tamping', tampTO: 'Turnout tamping', deepScreen: 'Deep screening',
   ballast: 'Ballast register (cushion)', curve: 'Curve register', fpJoint: 'Fish-plated joint register', glued: 'Glued joint register',
-  lc: 'Level crossing register', pxing: 'Points & crossings register', diamond: 'Diamond crossing register', sej: 'SEJ register',
+  lc: 'Level crossing register', pxing: 'Points & crossings register', diamond: 'Diamond crossing register', sej: 'SEJ register', bridge: 'Bridge register',
   sleeper: 'Sleeper defect exception report', cbmlReport: 'CBML block exception report', tampDue: 'Tamping due (PML/CBML) report',
 };
 
@@ -994,6 +994,7 @@ function classifySheet(rows, sheetName = '') {
   if (/LEVEL XING|LEVEL CROSSING/.test(H)) return 'lc';
   if (/POINTS & XING|PXING ID/.test(H)) return 'pxing';
   if (/SEJ REGISTER|SEJ ID/.test(H)) return 'sej';
+  if (/BRIDGE REGISTER|BRIDGE ID/.test(H)) return 'bridge';
   if (/BALLAST/.test(H) && /CLEAN CUSHION/.test(H)) return 'ballast';
   return null;
 }
@@ -1025,7 +1026,7 @@ function parseSheet(kind, rows) {
   } else {
     const spec = {
       ballast: ['SECTION', 'LINE', 'KM FROM'], curve: ['SECTION', 'LINE', 'KM FROM'], fpJoint: ['SECTION', 'LINE', 'KM FROM'],
-      glued: ['SECTION', 'LINE', 'KM FROM'], lc: ['SECTION', 'LOCATION'], pxing: ['LINE', 'KM'], sej: ['SECTION', 'LINE', 'KM FROM'], diamond: ['LINE 1: KM'],
+      glued: ['SECTION', 'LINE', 'KM FROM'], lc: ['SECTION', 'LOCATION'], pxing: ['LINE', 'KM'], sej: ['SECTION', 'LINE', 'KM FROM'], diamond: ['LINE 1: KM'], bridge: ['BRIDGE NO.', 'KM FROM', 'MET FROM'],
     }[kind];
     const hm = headerMap(rows, spec); if (!hm) return out;
     const g = hm.get;
@@ -1044,6 +1045,11 @@ function parseSheet(kind, rows) {
       } else if (kind === 'glued') {
         const p = ch(r[g('KM FROM')], r[g('MET FROM')]); if (p == null) continue;
         out.push({ section: sec, line: lineKey(r[g('LINE')]), pos: p, rail: txt(r[g('LR/RR')]), laid: ym(r[g('LAYING DATE')]), no: txt(r[g('GLUED JOINT NO')]) });
+      } else if (kind === 'bridge') {
+        // the register has no line column: a bridge carries every line of its section ('*'); bridges over the track (ROB / FOB) are left out
+        const use = txt(r[g('BRIDGE USAGE TYPE')]); if (/^(ROB|FOB)$/i.test(use.trim())) continue;
+        const a = ch(r[g('KM FROM')], r[g('MET FROM')]), b = ch(r[g('KM TO')], r[g('MET TO')]); if (a == null) continue;
+        out.push({ section: sec || sectionName(r[g('STATION')]), line: '*', a: Math.min(a, b ?? a), b: Math.max(a, b ?? a), no: txt(r[g('BRIDGE NO.')]), type: [txt(r[g('BRIDGE TYPE')]), use, txt(r[g('BRIDGE CATEGORY')])].filter(x => x && !/not applicable/i.test(x)).join(', ') });
       } else if (kind === 'sej') {
         const p = ch(r[g('KM FROM')], r[g('MET FROM')]); if (p == null) continue;
         out.push({ section: sec, station: txt(r[g('STATION')]).trim(), line: lineKey(r[g('LINE')]), pos: p, no: txt(r[g('SEJ NO')]) });
@@ -2446,6 +2452,30 @@ function check(r, f) {
   for (const [k, c] of Object.entries(r.cells)) { c.bad = !!(f[k] && !f[k](c.text)); c.doubt = c.bad || c.worst > DOUBT; if (c.doubt) r.doubt++; }
 }
 
+// ---------- checks across screenshots ----------
+// The same TMS row read on two overlapping screenshots must agree; Sr.No. runs on by one; IMR rows are in km order.
+// Any disagreement makes the values doubtful, so a misread that still looks valid is shown to the admin.
+function crossCheck(results) {
+  const seen = new Map();
+  for (const r of results) for (const t of r.tables) {
+    const sig = t.kind + ':' + (t.kind === 'imr' ? t.cols.status + '/' + t.cols.removed : t.runs.map(x => x.text).join(','));
+    let prev = null;
+    for (const row of t.rows) {
+      const c = row.cells; const sr = +c.sr.text;
+      if (prev && c.sr.text && prev.cells.sr.text && sr !== +prev.cells.sr.text + 1) mark(row, 'sr', 'Sr.No. does not follow the row above');
+      if (t.kind === 'imr' && prev && /^\d+$/.test(c.km.text) && /^\d+$/.test(prev.cells.km.text) && +c.km.text < +prev.cells.km.text) { mark(row, 'km', 'km smaller than the row above'); mark(prev, 'km', 'km larger than the row below'); }
+      if (c.sr.text) { const k = sig + '|' + c.sr.text, o = seen.get(k);
+        // a true overlap agrees on nearly every value; a row of another TMS page with the same Sr.No. agrees on few
+        if (o) { const fs = Object.keys(c).filter(f => f !== 'sr' && o.cells[f]); const same = fs.filter(f => o.cells[f].text === c[f].text).length;
+          if (same < fs.length && same >= fs.length - 2 && same >= 2) for (const f of fs) if (o.cells[f].text !== c[f].text) { mark(row, f, 'read differently on another screenshot'); mark(o, f, 'read differently on another screenshot'); } }
+        else seen.set(k, row); }
+      prev = row;
+    }
+  }
+  return results;
+}
+function mark(row, f, why) { const c = row.cells[f]; if (!c || c.doubt) return; c.doubt = true; c.why = why; row.doubt = (row.doubt || 0) + 1; }
+
 // ---------- records ----------
 // shot tables + admin choices → records for the server; values the admin corrected are in cell.text already
 function imrRecords(shots, section, line) {
@@ -2483,7 +2513,7 @@ function learn(T, G, line, text) {
 }
 
 
-return { DOUBT, imageFromRGBA, readShot, parseRun, imrRecords, omsRecords, learn, grey, ShotTemplates };
+return { DOUBT, imageFromRGBA, readShot, parseRun, crossCheck, imrRecords, omsRecords, learn, grey, ShotTemplates };
 })();
 __m['core.js'] = (function(){
 // Public surface of the engine (used by UI and by workers).
@@ -2499,9 +2529,9 @@ const {isRegister, parseRegister} = __m['registers.js'];
 const {classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest} = __m['tmsreports.js'];
 const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
-const {readShot, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
+const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck };
 
 return { CORE };
 })();

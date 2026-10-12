@@ -32,7 +32,8 @@ async function loadGeo() {
     const x = { no: f.n }; if (f.p != null) x.pos = f.p; else { x.a = f.a; x.b = f.b; } if (f.r != null) x.radius = f.r; if (f.se != null) x.se = f.se; if (f.v != null) x.versine = f.v; if (f.t) x.type = f.t;
     (o[f.k] = o[f.k] || []).push(x);
   }
-  F.geo = by; return by;
+  for (const k of Object.keys(by)) { const [s, l] = k.split('|'); if (l === '*') continue; const w = by[s + '|*']; if (w) for (const kind in w) by[k][kind] = (by[k][kind] || []).concat(w[kind]); }
+  F.geo = new Proxy(by, { get: (o, k) => o[k] || o[String(k).split('|')[0] + '|*'] }); return F.geo;
 }
 async function start() {
   loadGeo(); flush(); setInterval(flush, 60000); syncBadge();

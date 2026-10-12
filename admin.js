@@ -70,8 +70,8 @@ const errPage = (f, e) => ({ file: f.name, blocks: [], dist: {}, peaks: {}, uml:
 
 // ---------- upload view ----------
 const U = { files: [], log: [], running: false, dfwrDivision: true };
-const GEO_NAME = { curve: 'Curve register', pxing: 'P&C register', lc: 'LC register', sej: 'SEJ register', glued: 'Glued joint register', diamond: 'Diamond crossing register' };
-const KIND_NAME = { 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', trc: 'TRC km-wise pages' };
+const GEO_NAME = { curve: 'Curve register', pxing: 'P&C register', lc: 'LC register', sej: 'SEJ register', glued: 'Glued joint register', diamond: 'Diamond crossing register', bridge: 'Bridge register' };
+const KIND_NAME = { 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages' };
 V.upload = async el => {
   el.innerHTML = T.pageHead('Upload TMS data', 'Admin – every upload is added to the history; nothing older is overwritten') + `<div class="grid2">
     <div><div id="drop" class="drop" tabindex="0"><svg class="dropsvg" viewBox="0 0 48 48"><path d="M6 14h14l4 4h18v22H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M24 36V24m-5 5l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
@@ -81,8 +81,8 @@ V.upload = async el => {
       <input id="inFolder" type="file" webkitdirectory multiple hidden><input id="inFiles" type="file" multiple hidden accept=".png,.jpg,.jpeg,.xls,.xlsx,.pdf"></div>
 
       <div class="panel" style="margin-top:16px"><div class="panelhead"><span>Screenshots of TMS pages</span><span class="muted">IMR testing history, OMS peaks km-wise comparative summary</span></div>
-      <div style="padding:12px"><div id="shotPaste" class="pastebox" tabindex="0">Open the TMS page at normal zoom (100%) → press <b>Windows key + Shift + S</b> and drag over the table (include the column headings) → click here → press <b>Ctrl+V</b>.<br><span class="small">Scroll and repeat until every row is captured; rows seen twice are counted once. Saved screenshot files: <button id="pkShots" class="btn ghost sm">Select screenshot files</button></span></div>
-      <input id="inShots" type="file" multiple hidden accept=".png,.jpg,.jpeg"><div id="shotList" style="margin-top:10px"></div></div></div>
+      <div style="padding:12px"><div id="shotPaste" class="pastebox" tabindex="0">Open the TMS page at normal zoom (100%) → press <b>Windows key + Shift + S</b> and drag over the table (include the column headings) → click here → press <b>Ctrl+V</b>.<br><span class="small">Scroll and repeat until every row is captured; rows seen twice are counted once. Saved screenshots (many at once): <button id="pkShots" class="btn ghost sm">Select screenshot files</button> <button id="pkShotDir" class="btn ghost sm">Select a folder of screenshots</button></span></div>
+      <input id="inShots" type="file" multiple hidden accept=".png,.jpg,.jpeg"><input id="inShotDir" type="file" webkitdirectory multiple hidden><div id="shotList" style="margin-top:10px"></div></div></div>
       <div class="panel"><div class="panelhead"><span>Ready to upload</span><span class="right"><label class="small"><input type="checkbox" id="dfwrDiv" ${U.dfwrDivision ? 'checked' : ''}> DFWR file covers the whole division</label></span></div><div id="queue" style="padding:10px 14px"></div>
       <div style="padding:0 14px 14px" class="row"><button id="btnGo" class="btn primary">Upload and recalculate</button><button id="btnClr" class="btn secondary">Clear</button></div></div>
       <div class="plog" id="plog">${esc(U.log.join('\n')) || 'Progress will appear here.'}</div></div>
@@ -93,15 +93,47 @@ V.upload = async el => {
 function plog(m) { U.log.push(m); const p = $('plog'); if (p) { p.textContent = U.log.join('\n'); p.scrollTop = p.scrollHeight; } }
 function drawQueue() {
   const q = $('queue'); if (!q) return;
-  const png = U.files.filter(f => /\.png$/i.test(f.name)).length, oth = U.files.length - png;
+  const png = U.files.filter(f => /\.png$/i.test(f.name)).length, docs = U.files.filter(f => !/\.png$/i.test(f.name));
   const sh = SH.list.filter(x => x.status === 'done'), un = sh.filter(x => !x.checked).length;
-  q.innerHTML = (U.files.length || sh.length) ? `<div>${oth} report file(s), ${png} TRC page(s)${sh.length ? `, ${sh.length} screenshot(s)${un ? ` – <span class="od">${un} not checked yet</span>` : ' – checked'}` : ''}</div>` : '<div class="muted">Nothing selected yet.</div>';
+  if (!U.files.length && !sh.length) { q.innerHTML = '<div class="muted">Nothing selected yet.</div>'; return; }
+  const bad = docs.filter(f => f.__info && !f.__info.ok).length;
+  // every report file is opened on this computer as soon as it is picked, so it is clear what will be taken from it before anything is uploaded
+  q.innerHTML = `<div>${docs.length} report file(s), ${png} TRC page(s)${sh.length ? `, ${sh.length} screenshot(s)${un ? ` – <span class="od">${un} not checked yet</span>` : ' – checked'}` : ''}${bad ? ` · <span class="od">${bad} file(s) not recognised – they will be skipped</span>` : ''}</div>
+    ${docs.length ? `<table class="t fileq"><tbody>${docs.map(f => `<tr class="${f.__info && !f.__info.ok ? 'dbt' : ''}"><td class="small wrap">${esc(f.name)}</td><td class="small wrap">${f.__info ? f.__info.lines.map(l => esc(l)).join('<br>') : '<span class="muted">opening…</span>'}</td></tr>`).join('')}</tbody></table>` : ''}`;
+}
+// what the upload will take from one report file (read here, nothing is sent)
+async function inspectFile(f) {
+  const ext = f.name.split('.').pop().toLowerCase(), lines = []; let ok = false;
+  try {
+    const buf = await f.arrayBuffer();
+    if (ext === 'pdf') {
+      if (f.size > 15e6) { lines.push('Very large PDF – will be skipped'); }
+      else { const pages = await C.pdfPages(buf); if (C.isRegister(pages)) { const R = C.parseRegister(pages); ok = R.length > 0; lines.push(`Inspection register (${R[0] ? R[0].type : ''}) – ${R.length} inspections`); }
+        else { const k = C.classifyPdf(await C.pdfLines(buf)); ok = !!k; lines.push(k ? (C.KINDS[k] || k) + ' – used for the TRC analysis' : 'Not a TMS report this program knows'); } }
+    } else {
+      const wb = ext === 'xls' ? C.readXLS(buf) : await C.readXLSX(buf);
+      for (const sh of wb.sheets) {
+        const tag = wb.sheets.length > 1 ? `[${sh.name}] ` : '';
+        const k = C.classifyKpiSheet(sh.rows, sh.name);
+        if (k === 'jurisdiction') { ok = true; lines.push(tag + `Jurisdiction details – ${sh.rows.length - 1} rows`); continue; }
+        if (k) { const r = C.parseKpiSheet(k, sh.rows, sh.name); ok = ok || r.records.length > 0; lines.push(tag + `${KIND_NAME[k] || k} – ${r.records.length} rows${r.records.length ? '' : ' (no rows found – check the file)'}`); if (k !== 'weldReg' && k !== 'fpReg') continue; }
+        const g = C.classifySheet(sh.rows, sh.name);
+        if (g && !(k && (k === 'weldReg' || k === 'fpReg') && !GEO_NAME[g])) {
+          const recs = C.parseSheet(g, sh.rows); const secs = new Set(recs.map(r => r.section).filter(Boolean));
+          if (!k) { ok = ok || recs.length > 0; lines.push(tag + `${GEO_NAME[g] ? GEO_NAME[g] + ' (worksite tagging)' : C.KINDS[g] || g} – ${recs.length} rows, ${secs.size} section(s)${recs.length ? '' : ' (no rows found – check the file)'}`); }
+        }
+        if (!k && !g) lines.push(tag + 'Not a TMS report this program knows – will be skipped');
+      }
+    }
+  } catch (e) { lines.push('Could not open: ' + (e.message || e)); }
+  f.__info = { ok, lines }; drawQueue();
 }
 function addFiles(list) {
   const have = new Set(U.files.map(f => f.name + '|' + f.size)); const jpg = [];
   for (const f of list) { if (/\.jpe?g$/i.test(f.name)) { jpg.push(f); continue; } if (/\.(png|xls|xlsx|pdf)$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name + '|' + f.size)) U.files.push(f); }
   if (jpg.length) addShots(jpg);   // JPG pictures are screenshots, never TRC pages
   drawQueue();
+  (async () => { for (const f of U.files) if (!/\.png$/i.test(f.name) && !f.__info) await inspectFile(f); })();
 }
 function wireDrop() {
   $('pkFolder').onclick = e => { e.stopPropagation(); $('inFolder').click(); }; $('pkFiles').onclick = e => { e.stopPropagation(); $('inFiles').click(); };
@@ -236,7 +268,7 @@ async function runTRC(pngs, trcFiles) {
 
 // ---------- screenshots of TMS pages (IMR testing history, OMS comparative summary) ----------
 // Read on this computer, shown next to the picture for checking, and uploaded only after the admin confirms them.
-const SH = { list: [], seq: 0, T: null, ready: null, worker: null, jobs: new Map(), queue: [] };
+const SH = { list: [], seq: 0, T: null, ready: null, workers: [], jobs: new Map(), queue: [] };
 const SHOT_KIND = { imr: 'IMR testing history', oms: 'OMS comparative summary' };
 function shotSetup() {
   if (SH.ready) return SH.ready;
@@ -246,9 +278,11 @@ function shotSetup() {
     const all = base.concat(extra || []); SH.T = new C.ShotTemplates(all);
     try {
       const src = CORE_SRC + `\nlet T=null;self.onmessage=e=>{const d=e.data;if(d.templates){T=new self.CORE.ShotTemplates(d.templates);return;}if(d.add){for(const x of d.add)T.push(x.ch,Uint8Array.from(x.q),x.w);return;}try{const im={w:d.w,h:d.h,g3:new Uint16Array(d.buf)};postMessage({id:d.id,r:self.CORE.readShot(T,im,d.name)});}catch(err){postMessage({id:d.id,err:String(err&&err.message||err)});}};`;
-      SH.worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' }))); SH.worker.postMessage({ templates: all });
-      SH.worker.onmessage = e => { const j = SH.jobs.get(e.data.id); SH.jobs.delete(e.data.id); if (j) j(e.data); };
-    } catch (e) { SH.worker = null; }
+      // several readers side by side, so a batch of screenshots is read quickly
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })); const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+      for (let i = 0; i < n; i++) { const w = new Worker(url); w.postMessage({ templates: all }); w.busy = false;
+        w.onmessage = e => { w.busy = false; const j = SH.jobs.get(e.data.id); SH.jobs.delete(e.data.id); if (j) j(e.data); pumpShots(); }; SH.workers.push(w); }
+    } catch (e) { SH.workers = []; }
     return SH.T;
   })();
   return SH.ready;
@@ -262,8 +296,11 @@ async function decodeImage(blob) {
   return C.imageFromRGBA(c.width, c.height, x.getImageData(0, 0, c.width, c.height).data);
 }
 function readInWorker(sh, img) {
-  if (!SH.worker) return Promise.resolve().then(() => ({ r: C.readShot(SH.T, img, sh.name) }));
-  return new Promise(res => { const id = ++SH.seq; SH.jobs.set(id, res); const buf = img.g3.slice().buffer; SH.worker.postMessage({ id, w: img.w, h: img.h, buf, name: sh.name }, [buf]); });
+  if (!SH.workers.length) return Promise.resolve().then(() => ({ r: C.readShot(SH.T, img, sh.name) }));
+  return new Promise(res => { SH.queue.push({ res, img, name: sh.name }); pumpShots(); });
+}
+function pumpShots() {
+  for (const w of SH.workers) { if (w.busy || !SH.queue.length) continue; const q = SH.queue.shift(); const id = ++SH.seq; SH.jobs.set(id, q.res); w.busy = true; const buf = q.img.g3.slice().buffer; w.postMessage({ id, w: q.img.w, h: q.img.h, buf, name: q.name }, [buf]); }
 }
 const normName = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
 function lev(a, b) { const d = Array.from({ length: a.length + 1 }, (_, i) => [i]); for (let j = 1; j <= b.length; j++) d[0][j] = j; for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; }
@@ -278,29 +315,36 @@ function suggestLine(sec, txt) {
 }
 async function addShots(blobs) {
   await shotSetup(); if (!S.B.segments || !S.B.segments.length) toast('Upload the Jurisdiction Details first – sections and lines come from it.', true);
-  for (const b of blobs) {
-    const sh = { id: 'S' + (++SH.seq), name: b.label || b.name || `Pasted screenshot ${SH.list.length + 1}`, blob: b, url: URL.createObjectURL(b), status: 'reading', r: null, section: '', line: '', checked: false };
-    SH.list.push(sh); drawShots();
+  const sorted = [...blobs].sort((x, y) => String(x.label || x.name).localeCompare(String(y.label || y.name), undefined, { numeric: true }));   // Windows names screenshots by time
+  const added = sorted.map(b => { const sh = { id: 'S' + (++SH.seq), name: b.label || b.name || `Pasted screenshot ${SH.list.length + 1}`, blob: b, url: URL.createObjectURL(b), status: 'reading', r: null, section: '', line: '', checked: false }; SH.list.push(sh); return sh; });
+  drawShots();
+  await Promise.all(added.map(async sh => {
     try {
-      const img = await decodeImage(b); sh.img = img;
+      const img = await decodeImage(sh.blob); sh.img = img;
       const res = await readInWorker(sh, img); if (res.err) throw new Error(res.err);
       sh.r = res.r; sh.status = sh.r.kind && sh.r.kind !== 'mixed' ? 'done' : 'unknown';
-      sh.orig = JSON.stringify(sh.r.tables.map(t => [t.rows.map(r => Object.fromEntries(Object.entries(r.cells).map(([k, c]) => [k, c.text]))), (t.runs || []).map(x => x.text)]));
-      // section / line: from the page title when it can be read, else the same as the previous screenshot of this kind
-      const prev = SH.list.filter(x => x !== sh && x.r && x.r.kind === sh.r.kind && x.section).pop();
-      sh.section = suggestSection(sh.r.sectionText) || (prev ? prev.section : ''); sh.line = suggestLine(sh.section, sh.r.lineText) || (prev && prev.section === sh.section ? prev.line : '');
-      sh.asOn = sh.r.printed || (prev ? prev.asOn : '') || S.B.today;
       sh.doubt = sh.r.tables.reduce((a, t) => a + t.rows.reduce((b, r) => b + r.doubt, 0) + (t.runs || []).filter(x => x.doubt).length, 0);
       sh.rows = sh.r.tables.reduce((a, t) => a + t.rows.length, 0);
     } catch (e) { sh.status = 'error'; sh.err = e.message || String(e); }
     drawShots();
+  }));
+  // section / line: from the page title when it can be read, else the same as the screenshot before it (IMR pages show the title only on top)
+  for (const sh of added) {
+    if (sh.status !== 'done') continue; const i = SH.list.indexOf(sh);
+    const prev = SH.list.slice(0, i).filter(x => x.r && x.r.kind === sh.r.kind && x.section).pop();
+    sh.section = suggestSection(sh.r.sectionText) || (prev ? prev.section : ''); sh.line = suggestLine(sh.section, sh.r.lineText) || (prev && prev.section === sh.section ? prev.line : '');
+    sh.asOn = sh.r.printed || (prev ? prev.asOn : '') || S.B.today;
   }
+  drawShots();
 }
 function drawShots() {
   const el = $('shotList'); if (!el) return;
   if (!SH.list.length) { el.innerHTML = '<div class="muted small">No screenshots yet.</div>'; drawQueue(); return; }
-  const secs = segSections();
-  el.innerHTML = SH.list.map(sh => {
+  const secs = segSections(); const todo = SH.list.filter(x => x.status === 'done' && !x.checked), reading = SH.list.filter(x => x.status === 'reading').length;
+  const bar = `<div class="shotbatch"><div class="small"><b>${SH.list.length}</b> screenshot(s)${reading ? ` · <span class="muted">${reading} being read…</span>` : ''} · ${todo.length ? `<span class="od">${todo.length} to check</span>` : 'all checked'}</div>
+    ${todo.length ? `<div class="shotctl"><span class="small muted">Set for all unchecked:</span><select id="bSec"><option value="">Section…</option>${secs.map(x => `<option>${esc(x)}</option>`).join('')}</select><select id="bLine"><option value="">Line…</option></select><button class="btn secondary sm" id="bApply">Apply to all</button>
+      <button class="btn primary sm" id="bCheck"${reading ? ' disabled' : ''}>Check all (${todo.reduce((a, x) => a + (x.doubt || 0), 0)} doubtful value(s))</button></div>` : ''}</div>`;
+  el.innerHTML = bar + SH.list.map(sh => {
     const st = sh.status === 'reading' ? '<span class="muted">reading…</span>' : sh.status === 'error' ? `<span class="od">could not read: ${esc(sh.err)}</span>` : sh.status === 'unknown' ? `<span class="od">${esc((sh.r.notes || [])[0] || 'Not an IMR history or OMS comparative summary page')}</span>` : `<b>${esc(SHOT_KIND[sh.r.kind])}</b> · ${sh.rows} rows`;
     const ok = sh.status === 'done';
     return `<div class="shotrow${ok && !sh.checked ? ' todo' : ''}" data-id="${sh.id}"><div class="shotname"><span class="small">${esc(sh.name)}</span> <span class="small">${st}</span>
@@ -309,6 +353,11 @@ function drawShots() {
         <select data-f="line"><option value="">Line…</option>${segLines(sh.section).map(([l, n]) => `<option value="${esc(l)}" ${l === sh.line ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
         <button class="btn ${sh.checked ? 'ghost' : 'primary'} sm" data-a="check">${sh.checked ? 'Open' : 'Check against picture'}</button></div>` : ''}</div>`;
   }).join('');
+  if ($('bSec')) {
+    $('bSec').onchange = () => { $('bLine').innerHTML = '<option value="">Line…</option>' + segLines($('bSec').value).map(([l, n]) => `<option value="${esc(l)}">${esc(n)}</option>`).join(''); };
+    $('bApply').onclick = () => { const sc = $('bSec').value, ln = $('bLine').value; if (!sc || !ln) { toast('Choose both section and line', true); return; } SH.list.filter(x => x.status === 'done' && !x.checked).forEach(x => { x.section = sc; x.line = ln; }); drawShots(); };
+    $('bCheck').onclick = () => checkAll();
+  }
   el.querySelectorAll('.shotrow').forEach(tr => {
     const sh = SH.list.find(x => x.id === tr.dataset.id);
     tr.querySelectorAll('select').forEach(s => s.onchange = () => { sh[s.dataset.f] = s.value; if (s.dataset.f === 'section') sh.line = ''; sh.checked = false; drawShots(); });
@@ -378,6 +427,51 @@ function checkShot(sh) {
     close(); if (changed.length) learnFrom(sh, changed);
   };
 }
+// ---------- check a whole batch: only the doubtful values, each under its piece of its screenshot ----------
+const fieldOf = k => /^[vl]\d+$/.test(k) ? 'cnt' : k;
+const LABEL = { sr: 'Sr.No.', km: 'km', m: 'm', rail: 'LR/RR', status: 'Status', tested: 'Date of testing', removed: 'Removed on' };
+// the same row seen in two screenshots must read the same; where it does not, both are marked doubtful
+function crossCheck(shots) { C.crossCheck(shots.map(x => x.r)); }
+function checkAll() {
+  const shots = SH.list.filter(x => x.status === 'done' && !x.checked);
+  if (!shots.length) return;
+  const noLine = shots.filter(x => !x.section || !x.line);
+  if (noLine.length) { toast(`${noLine.length} screenshot(s) have no section / line yet – use "Set for all unchecked" or the boxes on each screenshot`, true); return; }
+  crossCheck(SH.list.filter(x => x.status === 'done'));
+  let ov = $('shotChk'); if (!ov) { ov = document.createElement('div'); ov.id = 'shotChk'; ov.className = 'shotchk'; document.body.appendChild(ov); }
+  const items = []; let clean = 0;
+  shots.forEach((sh, si) => sh.r.tables.forEach((t, ti) => {
+    (t.runs || []).forEach((ru, i) => { if (ru.doubt) items.push({ si, ti, run: i, box: ru.box, text: ru.text, label: `RUN ${ru.idx} heading` }); });
+    t.rows.forEach((row, ri) => Object.entries(row.cells).forEach(([k, c]) => {
+      const bad = !VALID[fieldOf(k)](c.text);
+      if (c.doubt || bad) items.push({ si, ti, ri, k, box: c.box, text: c.text, label: `${t.kind === 'oms' && /^[vl]/.test(k) ? `Run ${+k.slice(1) + 1} ${k[0] === 'v' ? 'vertical' : 'lateral'}` : LABEL[k] || k} · Sr ${row.cells.sr ? row.cells.sr.text : '?'}, km ${row.cells.km ? row.cells.km.text : '?'}` });
+      else if (c.text) clean++;
+    }));
+  }));
+  const crop = b => b ? `<canvas class="crop" data-box="${b.join(',')}" width="${b[2] - b[0]}" height="${b[3] - b[1]}"></canvas>` : '';
+  const groups = shots.map((sh, si) => { const its = items.filter(x => x.si === si); return its.length ? `<div class="bgroup" data-si="${si}"><div class="small"><b>${esc(sh.name)}</b> · ${esc(SHOT_KIND[sh.r.kind])} · ${esc(sh.section)} ${esc(sh.line)}</div><div class="bitems">${its.map(it => `<div class="pair bitem">${crop(it.box)}<span class="small muted">${esc(it.label)}</span><input class="sv bad" data-n="${items.indexOf(it)}" value="${esc(it.text)}" spellcheck="false" autocomplete="off" style="width:${Math.max(90, it.box ? it.box[2] - it.box[0] : 90)}px"></div>`).join('')}</div></div>` : ''; }).join('');
+  ov.innerHTML = `<div class="shotbar"><b>Check ${shots.length} screenshot(s)</b> <span class="muted">${items.length} doubtful value(s) · ${clean} value(s) read cleanly</span>
+      <span class="right"><button class="btn secondary" id="ckClose">Close</button><button class="btn primary" id="ckOk">Confirm all ${shots.length} screenshot(s)</button></span></div>
+    <div class="shothelp">${items.length ? 'Only the doubtful values are shown, each under its piece of the screenshot. Correct any that differ from the picture. A value that is read twice (overlapping screenshots) and differs is shown here too.' : 'Every value was read cleanly and the overlapping screenshots agree.'} To look at a whole screenshot, close this and click "Open" / "Check against picture" on it.</div>
+    <div class="shotvals">${groups || '<div class="empty">Nothing doubtful.</div>'}</div>`;
+  shots.forEach((sh, si) => { const g = ov.querySelector(`.bgroup[data-si="${si}"]`); if (!g) return; const img = new Image(); img.onload = () => g.querySelectorAll('canvas.crop').forEach(c => { const [x0, y0, x1, y1] = c.dataset.box.split(',').map(Number); c.getContext('2d').drawImage(img, x0, y0, x1 - x0, y1 - y0, 0, 0, x1 - x0, y1 - y0); }); img.src = sh.url; });
+  ov.querySelectorAll('input.sv').forEach(inp => inp.oninput = () => inp.classList.remove('bad'));
+  $('ckClose').onclick = () => { ov.remove(); drawShots(); };
+  $('ckOk').onclick = () => {
+    const errs = [], changed = new Map();
+    ov.querySelectorAll('input.sv').forEach(inp => {
+      const it = items[+inp.dataset.n], sh = shots[it.si], t = sh.r.tables[it.ti]; let v = inp.value.trim().toUpperCase().replace(/\s+/g, ' ');
+      if (it.run != null) { const ru = t.runs[it.run], p = C.parseRun(v); if (!p.ok) { errs.push(inp); return; } if (p.text !== ru.text) (changed.get(sh) || changed.set(sh, []).get(sh)).push({ lines: ru.lines, text: v }); Object.assign(ru, { text: p.text, month: p.month, id: p.id, doubt: false }); return; }
+      if (it.k !== 'status') v = v.replace(/\s+/g, ''); const c = t.rows[it.ri].cells[it.k];
+      if (!VALID[fieldOf(it.k)](v)) { errs.push(inp); return; }
+      if (v && v !== c.text) (changed.get(sh) || changed.set(sh, []).get(sh)).push({ line: c.line, text: v }); c.text = v; c.doubt = false;
+    });
+    if (errs.length) { errs.forEach(i => i.classList.add('bad')); errs[0].focus(); errs[0].scrollIntoView({ block: 'center' }); toast(`${errs.length} value(s) are not in the right form – see the red boxes`, true); return; }
+    for (const sh of shots) { sh.r.tables.forEach(t => t.rows.forEach(r => { r.doubt = 0; Object.values(r.cells).forEach(c => c.doubt = false); })); sh.checked = true; sh.doubt = 0; }
+    ov.remove(); drawShots(); toast(`${shots.length} screenshot(s) checked – click "Upload and recalculate"`);
+    for (const [sh, ch] of changed) learnFrom(sh, ch);
+  };
+}
 // corrected values become new glyph samples (kept on the server, shared by every admin PC)
 async function learnFrom(sh, changed) {
   try {
@@ -387,7 +481,7 @@ async function learnFrom(sh, changed) {
       else if (ch.lines && ch.lines.length) add.push(...C.learnShot(SH.T, G, ch.lines[ch.lines.length - 1].line, ch.text));
     }
     if (!add.length) return;
-    if (SH.worker) SH.worker.postMessage({ add });
+    SH.workers.forEach(w => w.postMessage({ add }));
     for (let i = 0; i < add.length; i += 100) await call('ocrLearn', { glyphs: add.slice(i, i + 100) });
     toast(`Reader learnt ${add.length} new character shape(s) from your corrections`);
   } catch (e) { /* learning is optional */ }
@@ -413,7 +507,9 @@ function wireShots() {
   if (!$('shotPaste')) return;
   if (!SH.pasteWired) { SH.pasteWired = true; document.addEventListener('paste', onShotPaste); }
   $('pkShots').onclick = e => { e.stopPropagation(); $('inShots').click(); };
-  $('inShots').onchange = e => { const f = [...e.target.files].filter(x => /\.(png|jpe?g)$/i.test(x.name)); e.target.value = ''; if (f.length) addShots(f); };
+  $('pkShotDir').onclick = e => { e.stopPropagation(); $('inShotDir').click(); };
+  const pick = e => { const have = new Set(SH.list.map(x => x.name + '|' + x.blob.size)); const f = [...e.target.files].filter(x => /\.(png|jpe?g)$/i.test(x.name) && !have.has(x.name + '|' + x.size)); e.target.value = ''; if (f.length) addShots(f); else toast('No new PNG / JPG pictures in that selection', true); };
+  $('inShots').onchange = pick; $('inShotDir').onchange = pick;
   drawShots();
 }
 

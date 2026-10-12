@@ -231,3 +231,6 @@ input.sv.bad{background:#fde3e3;border-color:var(--crit);color:#9b1c1c;font-weig
 table.shotgrid.oms input.sv{text-align:center}.runs .pair input.sv{width:auto}
 .shotpic{flex:0 0 30vh}
 .pair canvas.crop{align-self:flex-start}
+.shotbatch{border:1px solid var(--line);background:#f7f8fa;padding:8px 10px;margin-bottom:8px}
+.bgroup{margin-bottom:14px}.bitems{display:flex;flex-wrap:wrap;gap:10px 14px;margin-top:6px}.bitem{padding:6px;border:1px solid var(--line);background:#fff}
+table.fileq{margin-top:6px}table.fileq td{padding:3px 6px;vertical-align:top}table.fileq tr.dbt td{background:#fff4f4}
