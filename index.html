@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14181f">
+<title>TMS Control</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css?v=202610120919">
+<script>
+// Files dropped anywhere on the page never open in the browser; they go to the Upload page (admin).
+window.__bootErrors = [];
+window.addEventListener('error', function (e) { window.__bootErrors.push((e.message || 'Script error') + (e.lineno ? ' (line ' + e.lineno + ')' : '')); });
+(function () {
+  function isFiles(e) { var t = e.dataTransfer && e.dataTransfer.types; if (!t) return false; for (var i = 0; i !== t.length; i++) if (t[i] === 'Files' || t[i] === 'application/x-moz-file') return true; return false; }
+  function stop(e) { if (!isFiles(e)) return; e.preventDefault(); try { e.dataTransfer.dropEffect = window.TMSC_DROP ? 'copy' : 'none'; } catch (x) {} }
+  window.addEventListener('dragenter', stop, true); window.addEventListener('dragover', stop, true);
+  window.addEventListener('drop', function (e) { if (!isFiles(e)) return; e.preventDefault(); e.stopPropagation(); if (window.TMSC_DROP) window.TMSC_DROP(e.dataTransfer); }, true);
+})();
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="pname">TMS Control</span><span class="org">Engineering · Howrah Division</span></div>
+  <div class="actions">
+    <div class="who hidden" id="who"><span class="rolechip" id="whoRole"></span><b id="whoName"></b><span id="whoScope"></span></div>
+    <button class="tb small hidden" id="btnSync" title="Records waiting to upload"></button>
+    <button class="tb small" id="btnReload" title="Reload data">Refresh</button>
+    <button class="tb small" id="btnHelp">Help</button>
+  </div>
+</header>
+<div id="netbar" class="netbar hidden"></div>
+<div class="shell">
+  <aside id="rail" class="rail hidden">
+    <div class="railsec" id="railUnitWrap"><label class="lbl" for="selUnit">Unit</label><select id="selUnit"></select></div>
+    <nav id="nav" class="nav"></nav>
+    <div class="railfoot" id="railFoot"></div>
+  </aside>
+  <main id="main">
+    <div id="boot" class="busy"><div class="eyebrow">Loading</div><h2>Opening TMS Control…</h2><div class="bar"><div style="width:40%"></div></div></div>
+    <div id="banner"></div>
+    <div id="views"></div>
+  </main>
+</div>
+<div id="drawer" class="drawer"></div>
+<div id="modal" class="modal hidden"><div class="modalbox"><div id="modalBody"></div><div class="modalbtns"><button id="modalCancel" class="btn secondary">Close</button><button id="modalOk" class="btn primary">OK</button></div></div></div>
+<div id="dropveil" class="dropveil hidden"><div>Release to load files</div></div>
+<div id="tip" class="tip hidden"></div>
+<script src="config.js?v=202610120919"></script>
+<script src="store.js?v=202610120919"></script>
+<script src="stations.js?v=202610120919"></script>
+<script src="app.js?v=202610120919"></script>
+<script src="field.js?v=202610120919"></script>
+<script>
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(function () {});
+</script>
+</body>
+</html>
