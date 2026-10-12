@@ -92,8 +92,8 @@ async function boot() {
 // admin tools (file readers, OCR models) are loaded only for the admin
 async function loadAdmin() {
   try {
-    const [core, models] = await Promise.all([fetch('core.js?v=' + CFG.VERSION).then(r => r.text()), fetch('models.json?v=' + CFG.VERSION).then(r => r.text())]);
-    const src = { core, models }; window.__tmscSrc = k => src[k];
+    const [core, models, shotmodel] = await Promise.all(['core.js', 'models.json', 'shotmodel.json'].map(f => fetch(f + '?v=' + CFG.VERSION).then(r => { if (!r.ok) throw new Error(f); return r.text(); })));
+    const src = { core, models, shotmodel }; window.__tmscSrc = k => src[k];
     await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'admin.js?v=' + CFG.VERSION; s.onload = res; s.onerror = () => rej(new Error('admin.js')); document.body.appendChild(s); });
   } catch (e) { toast('Admin tools could not be loaded (' + e.message + '). Upload needs signal.', true); }
 }

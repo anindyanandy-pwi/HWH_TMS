@@ -210,3 +210,24 @@ label.btn{display:inline-flex;align-items:center}
 @media print{.netbar,#banner{display:none}}
 .actbar{position:sticky;top:48px;z-index:20;display:flex;gap:10px;align-items:center;justify-content:space-between;background:#fffbe8;border:1px solid #ead79a;padding:8px 12px;margin-bottom:10px}
 .nav .cnt{margin-left:6px}
+/* screenshot check (admin) */
+table.shots td{vertical-align:middle}table.shots select{max-width:170px;padding:3px 4px}
+.shotchk{position:fixed;inset:0;z-index:65;background:#f2f3f5;display:flex;flex-direction:column}
+.shotbar{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line)}
+.shotbar label{font-size:12.5px;color:var(--sub);display:inline-flex;gap:6px;align-items:center}.shotbar select,.shotbar input{padding:4px 6px;border:1px solid #b9bfc9}
+.shotbar .right{margin-left:auto;display:flex;gap:8px}
+.shotpic{flex:0 0 46vh;overflow:auto;background:#d9dde3;border-bottom:1px solid var(--line)}.shotpic canvas{display:block}
+.shothelp{padding:7px 14px;font-size:12.5px;background:#fffbe8;border-bottom:1px solid #ead79a}
+.shotvals{flex:1;overflow:auto;padding:10px 14px}
+table.shotgrid td{padding:2px 3px}table.shotgrid tr.dbt td{background:#fff4f4}
+input.sv{width:96px;padding:4px 5px;border:1px solid #c9ced6;font:13px/1.2 var(--num);background:#fff}
+input.sv:focus{outline:2px solid #0a58ca;outline-offset:-1px}
+input.sv.bad{background:#fde3e3;border-color:var(--crit);color:#9b1c1c;font-weight:600}
+.runs{display:flex;flex-wrap:wrap;gap:6px 12px;margin-bottom:10px}.runs .run{font-size:12px;color:var(--sub);display:inline-flex;gap:5px;align-items:center}.runs input.sv{width:190px}
+.shotrow{border:1px solid var(--line);background:#fff;padding:7px 9px;margin-bottom:6px}.shotrow.todo{border-left:4px solid var(--warn)}
+.shotname{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.shotname .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+.shotctl{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}.shotctl select{flex:1 1 150px;padding:4px 5px;border:1px solid #b9bfc9;max-width:220px}
+.pair{display:flex;flex-direction:column;gap:2px}.pair canvas.crop{display:block;border:1px solid #d5d9e0;background:#fff;image-rendering:pixelated}
+table.shotgrid.oms input.sv{text-align:center}.runs .pair input.sv{width:auto}
+.shotpic{flex:0 0 30vh}
+.pair canvas.crop{align-self:flex-start}

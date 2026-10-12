@@ -69,50 +69,48 @@ const errPage = (f, e) => ({ file: f.name, blocks: [], dist: {}, peaks: {}, uml:
 
 
 // ---------- upload view ----------
-const U = { files: [], pastes: [], log: [], running: false, dfwrDivision: true };
+const U = { files: [], log: [], running: false, dfwrDivision: true };
 const GEO_NAME = { curve: 'Curve register', pxing: 'P&C register', lc: 'LC register', sej: 'SEJ register', glued: 'Glued joint register', diamond: 'Diamond crossing register' };
-const KIND_NAME = { 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary (pasted)', imr: 'IMR history (pasted)', weldReg: 'Weld register', trc: 'TRC km-wise pages' };
+const KIND_NAME = { 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', trc: 'TRC km-wise pages' };
 V.upload = async el => {
   el.innerHTML = T.pageHead('Upload TMS data', 'Admin – every upload is added to the history; nothing older is overwritten') + `<div class="grid2">
     <div><div id="drop" class="drop" tabindex="0"><svg class="dropsvg" viewBox="0 0 48 48"><path d="M6 14h14l4 4h18v22H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M24 36V24m-5 5l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       <div class="droptitle">Click <b>Select files</b> and pick the reports</div><div class="dropsub">TMS PDFs, XLS / XLSX reports, TRC km-wise PNG pages. In the file window you can select many files at once (Ctrl+A or Ctrl+click).</div>
       <div class="btnrow"><button id="pkFiles" class="btn primary">Select files</button><button id="pkFolder" class="btn secondary">Select a whole folder</button></div>
       <div class="dropsub small" style="margin-top:10px">Dragging files onto this box also works in Chrome and Edge. If a dragged file opens in a new tab instead, use the buttons.</div>
-      <input id="inFolder" type="file" webkitdirectory multiple hidden><input id="inFiles" type="file" multiple hidden accept=".png,.xls,.xlsx,.pdf"></div>
-      <div class="panel" style="margin-top:16px"><div class="panelhead"><span>Paste from a TMS web page</span><span class="muted">for reports that cannot be downloaded (IMR history, OMS comparative summary)</span></div>
-      <div style="padding:12px"><div id="paste" class="pastebox" tabindex="0" contenteditable="true">Open the TMS report page → press Ctrl+A then Ctrl+C → click here and press Ctrl+V</div></div></div>
+      <input id="inFolder" type="file" webkitdirectory multiple hidden><input id="inFiles" type="file" multiple hidden accept=".png,.jpg,.jpeg,.xls,.xlsx,.pdf"></div>
+
+      <div class="panel" style="margin-top:16px"><div class="panelhead"><span>Screenshots of TMS pages</span><span class="muted">IMR testing history, OMS peaks km-wise comparative summary</span></div>
+      <div style="padding:12px"><div id="shotPaste" class="pastebox" tabindex="0">Open the TMS page at normal zoom (100%) → press <b>Windows key + Shift + S</b> and drag over the table (include the column headings) → click here → press <b>Ctrl+V</b>.<br><span class="small">Scroll and repeat until every row is captured; rows seen twice are counted once. Saved screenshot files: <button id="pkShots" class="btn ghost sm">Select screenshot files</button></span></div>
+      <input id="inShots" type="file" multiple hidden accept=".png,.jpg,.jpeg"><div id="shotList" style="margin-top:10px"></div></div></div>
       <div class="panel"><div class="panelhead"><span>Ready to upload</span><span class="right"><label class="small"><input type="checkbox" id="dfwrDiv" ${U.dfwrDivision ? 'checked' : ''}> DFWR file covers the whole division</label></span></div><div id="queue" style="padding:10px 14px"></div>
       <div style="padding:0 14px 14px" class="row"><button id="btnGo" class="btn primary">Upload and recalculate</button><button id="btnClr" class="btn secondary">Clear</button></div></div>
       <div class="plog" id="plog">${esc(U.log.join('\n')) || 'Progress will appear here.'}</div></div>
     <div><div class="panel body"><h3 class="sec">Upload checklist</h3><div id="chk"><div class="empty">Loading…</div></div></div></div></div>`;
-  wireDrop(); drawQueue();
+  wireDrop(); wireShots(); drawQueue();
   try { const st = await call('dataStatus'); $('chk').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>Report</th><th>How often</th><th>Last upload</th><th>Records</th></tr></thead><tbody>${st.map(r => `<tr><td class="wrap">${esc(r.what)}</td><td class="nw small">${esc(r.when)}</td><td class="nw">${r.last ? dmy(r.last) + `<div class="small">as on ${dmy(r.asOn)}</div>` : '<span class="od">never</span>'}</td><td class="n">${r.records ?? ''}</td></tr>`).join('')}</tbody></table></div>`; } catch (e) { fail(e); }
 };
 function plog(m) { U.log.push(m); const p = $('plog'); if (p) { p.textContent = U.log.join('\n'); p.scrollTop = p.scrollHeight; } }
 function drawQueue() {
   const q = $('queue'); if (!q) return;
   const png = U.files.filter(f => /\.png$/i.test(f.name)).length, oth = U.files.length - png;
-  q.innerHTML = (U.files.length || U.pastes.length) ? `<div>${oth} report file(s), ${png} TRC page(s)${U.pastes.length ? `, ${U.pastes.length} pasted table(s): ${U.pastes.map(p => esc(KIND_NAME[p.kind])).join(', ')}` : ''}</div>` : '<div class="muted">Nothing selected yet.</div>';
+  const sh = SH.list.filter(x => x.status === 'done'), un = sh.filter(x => !x.checked).length;
+  q.innerHTML = (U.files.length || sh.length) ? `<div>${oth} report file(s), ${png} TRC page(s)${sh.length ? `, ${sh.length} screenshot(s)${un ? ` – <span class="od">${un} not checked yet</span>` : ' – checked'}` : ''}</div>` : '<div class="muted">Nothing selected yet.</div>';
 }
-function addFiles(list) { const have = new Set(U.files.map(f => f.name + '|' + f.size)); for (const f of list) if (/\.(png|xls|xlsx|pdf)$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name + '|' + f.size)) U.files.push(f); drawQueue(); }
+function addFiles(list) {
+  const have = new Set(U.files.map(f => f.name + '|' + f.size)); const jpg = [];
+  for (const f of list) { if (/\.jpe?g$/i.test(f.name)) { jpg.push(f); continue; } if (/\.(png|xls|xlsx|pdf)$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name + '|' + f.size)) U.files.push(f); }
+  if (jpg.length) addShots(jpg);   // JPG pictures are screenshots, never TRC pages
+  drawQueue();
+}
 function wireDrop() {
   $('pkFolder').onclick = e => { e.stopPropagation(); $('inFolder').click(); }; $('pkFiles').onclick = e => { e.stopPropagation(); $('inFiles').click(); };
   $('drop').onclick = e => { if (!e.target.closest('button,input')) $('inFiles').click(); }; $('drop').style.cursor = 'pointer';
   const picked = e => { const n = U.files.length; addFiles([...e.target.files]); e.target.value = ''; const a = U.files.length - n; toast(a ? `${a} file(s) added. Click "Upload and recalculate".` : 'No new PDF / XLS / XLSX / PNG files in that selection.', !a); };
   $('inFolder').onchange = picked; $('inFiles').onchange = picked;
-  $('btnClr').onclick = () => { U.files = []; U.pastes = []; U.log = []; drawQueue(); $('plog').textContent = 'Progress will appear here.'; };
+  $('btnClr').onclick = () => { U.files = []; U.log = []; SH.list.forEach(x => URL.revokeObjectURL(x.url)); SH.list = []; drawShots(); $('plog').textContent = 'Progress will appear here.'; };
   $('btnGo').onclick = () => runUpload();
   $('dfwrDiv').onchange = e => U.dfwrDivision = e.target.checked;
-  const pb = $('paste');
-  pb.onfocus = () => { if (/^Open the TMS/.test(pb.textContent)) pb.textContent = ''; };
-  pb.addEventListener('paste', e => {
-    e.preventDefault(); const html = e.clipboardData.getData('text/html'), text = e.clipboardData.getData('text/plain');
-    const tb = C.tablesFromPaste(html, text); const k = C.classifyPaste(tb.title + ' ' + text.slice(0, 3000));
-    if (!k) { toast('This page was not recognised (IMR history or OMS comparative summary expected)', true); return; }
-    const r = C.parsePaste(k, { tables: tb.tables, title: text.slice(0, 4000) });
-    if (!r || !r.records.length) { toast('No rows found in the pasted page', true); return; }
-    U.pastes.push(r); pb.textContent = `Added: ${KIND_NAME[r.kind]} – ${r.records.length} rows. Paste the next page if you have one.`; drawQueue();
-  });
 }
 let dragDepth = 0;
 const isFileDrag = e => { const t = e.dataTransfer && e.dataTransfer.types; return !!t && [...t].some(x => x === 'Files' || x === 'application/x-moz-file'); };
@@ -157,7 +155,12 @@ async function send(kind, payload, size = 1500) {
   return tot;
 }
 async function runUpload() {
-  if (U.running) return; if (!U.files.length && !U.pastes.length) { toast('Select files first', true); return; }
+  if (U.running) return;
+  const shots = SH.list.filter(x => x.status === 'done');
+  if (SH.list.some(x => x.status === 'reading')) { toast('Screenshots are still being read – wait a moment', true); return; }
+  const unchecked = shots.filter(x => !x.checked || !x.section || !x.line);
+  if (unchecked.length) { toast(`${unchecked.length} screenshot(s) not checked yet. Click "Check" on each (or remove it with ✕), then upload.`, true); $('shotList').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+  if (!U.files.length && !shots.length) { toast('Select files first', true); return; }
   U.running = true; $('btnGo').disabled = true; U.log = []; const t0 = Date.now();
   try {
     const pngs = U.files.filter(f => /\.png$/i.test(f.name)); const docs = U.files.filter(f => !/\.png$/i.test(f.name));
@@ -183,7 +186,7 @@ async function runUpload() {
       } catch (e) { plog(`  ${f.name}: could not read – ${e.message}`); continue; }
       if (!used) trcFiles.push({ name: f.name, size: f.size, buf });
     }
-    for (const p of U.pastes) kpiSets.push(p);
+    for (const p of shotSets()) { if (p.records.length) kpiSets.push(p); else plog(`${KIND_NAME[p.kind]} (${p.scope.section} ${p.scope.line}): no rows with values`); }
     if (out.jurisdiction) { plog('Uploading jurisdiction…'); await call('ingest', { kind: 'jurisdiction', rows: out.jurisdiction, file: 'Jurisdiction Details' }); }
     if (out.inspections.length) { const seen = new Set(); const recs = out.inspections.filter(r => !seen.has(r.key) && seen.add(r.key)).map(r => Object.assign({}, r, { defects: undefined })); plog(`Uploading ${recs.length} inspections…`); const r = await send('inspections', { records: recs, file: 'Inspection registers' }, 400); plog(`  ${r.inserted} new inspection(s) added to the history`); }
     for (const s of kpiSets) {
@@ -205,7 +208,7 @@ async function runUpload() {
     }
     if (pngs.length) await runTRC(pngs, trcFiles);
     plog('Recalculating KPIs and jobs…'); const rr = await call('refresh'); plog('Done: ' + Object.entries(rr).filter(([k]) => /^K|tracker/.test(k)).map(([k, v]) => `${k} ${typeof v === 'object' ? `+${v.inserted}/~${v.updated}/-${v.closed}` : v}`).join(' · '));
-    plog(`Finished in ${Math.round((Date.now() - t0) / 1000)} s.`); toast('Upload complete'); U.files = []; U.pastes = []; drawQueue(); await T.reload();
+    plog(`Finished in ${Math.round((Date.now() - t0) / 1000)} s.`); toast('Upload complete'); U.files = []; SH.list.filter(x => x.checked).forEach(x => URL.revokeObjectURL(x.url)); SH.list = SH.list.filter(x => !x.checked && x.status !== 'done'); drawShots(); drawQueue(); await T.reload();
   } catch (e) { plog('ERROR: ' + (e.error || e.message || e)); fail(e); }
   U.running = false; const b = $('btnGo'); if (b) b.disabled = false;
 }
@@ -215,7 +218,7 @@ async function runTRC(pngs, trcFiles) {
   const pages = await readPages(pngs, (d, n) => { if (d % 25 === 0 || d === n) plog(`  TRC pages ${d} / ${n}`); });
   for (const p of pages) store.pages.push(p);
   const notTrc = pages.filter(p => (p.problems || []).some(x => /Not a TMS km-wise result page/.test(x)));
-  if (notTrc.length) plog(`  ${notTrc.length} picture(s) are not TRC km-wise pages and were skipped: ${notTrc.slice(0, 5).map(p => p.file).join('; ')}${notTrc.length > 5 ? ' …' : ''}\n  Screenshots of IMR or OMS pages cannot be read. Open that page in TMS, press Ctrl+A then Ctrl+C, and paste it into the box "Paste from a TMS web page".`);
+  if (notTrc.length) { plog(`  ${notTrc.length} picture(s) are not TRC km-wise pages – moved to "Screenshots of TMS pages". Check them there and click Upload again.`); const names = new Set(notTrc.map(p => p.file)); addShots(pngs.filter(f => names.has(f.name))); }
   const bad = pages.filter(p => p.problems && p.problems.length && !notTrc.includes(p)); if (bad.length) plog(`  ${bad.length} page(s) need attention: ` + bad.slice(0, 5).map(p => p.file + ' (' + p.problems.join(', ') + ')').join('; '));
   const R = C.analyse(store);
   if (!R.lines.length) { plog('  No TRC lines found in the pages.'); return; }
@@ -229,6 +232,189 @@ async function runTRC(pngs, trcFiles) {
   for (let i = 0; i < Math.max(bc.length, pc.length); i++) await call('ingestTRC', { uploadId: id, blocks: bc[i] || [], peaks: pc[i] || [], final: false });
   const r = await call('ingestTRC', { uploadId: id, lines, todo, final: true, file: pngs.length + ' TRC pages' });
   plog(`  TRC jobs: ${r.inserted} new, ${r.updated} updated, ${r.closed || 0} closed / verified by the new run`);
+}
+
+// ---------- screenshots of TMS pages (IMR testing history, OMS comparative summary) ----------
+// Read on this computer, shown next to the picture for checking, and uploaded only after the admin confirms them.
+const SH = { list: [], seq: 0, T: null, ready: null, worker: null, jobs: new Map(), queue: [] };
+const SHOT_KIND = { imr: 'IMR testing history', oms: 'OMS comparative summary' };
+function shotSetup() {
+  if (SH.ready) return SH.ready;
+  SH.ready = (async () => {
+    let base = []; try { base = JSON.parse(window.__tmscSrc('shotmodel') || '[]'); } catch (e) {}
+    let extra = []; try { extra = await call('ocrModel'); } catch (e) { /* offline: base set only */ }
+    const all = base.concat(extra || []); SH.T = new C.ShotTemplates(all);
+    try {
+      const src = CORE_SRC + `\nlet T=null;self.onmessage=e=>{const d=e.data;if(d.templates){T=new self.CORE.ShotTemplates(d.templates);return;}if(d.add){for(const x of d.add)T.push(x.ch,Uint8Array.from(x.q),x.w);return;}try{const im={w:d.w,h:d.h,g3:new Uint16Array(d.buf)};postMessage({id:d.id,r:self.CORE.readShot(T,im,d.name)});}catch(err){postMessage({id:d.id,err:String(err&&err.message||err)});}};`;
+      SH.worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' }))); SH.worker.postMessage({ templates: all });
+      SH.worker.onmessage = e => { const j = SH.jobs.get(e.data.id); SH.jobs.delete(e.data.id); if (j) j(e.data); };
+    } catch (e) { SH.worker = null; }
+    return SH.T;
+  })();
+  return SH.ready;
+}
+// PNG is decoded by the app itself (exact pixel values, as when the reader was trained); JPG by the browser
+async function decodeImage(blob) {
+  const buf = await blob.arrayBuffer(); const sig = new Uint8Array(buf, 0, 4);
+  if (sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47) { const im = await C.decodePNG(buf); return { w: im.w, h: im.h, g3: im.g3 }; }
+  let bm; try { bm = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }); } catch (e) { bm = await createImageBitmap(blob); }
+  const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(bm, 0, 0);
+  return C.imageFromRGBA(c.width, c.height, x.getImageData(0, 0, c.width, c.height).data);
+}
+function readInWorker(sh, img) {
+  if (!SH.worker) return Promise.resolve().then(() => ({ r: C.readShot(SH.T, img, sh.name) }));
+  return new Promise(res => { const id = ++SH.seq; SH.jobs.set(id, res); const buf = img.g3.slice().buffer; SH.worker.postMessage({ id, w: img.w, h: img.h, buf, name: sh.name }, [buf]); });
+}
+const normName = s => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+function lev(a, b) { const d = Array.from({ length: a.length + 1 }, (_, i) => [i]); for (let j = 1; j <= b.length; j++) d[0][j] = j; for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; }
+function segSections() { return [...new Set((S.B.segments || []).map(s => s.section).filter(Boolean))].sort(); }
+function segLines(sec) { const m = new Map(); for (const s of S.B.segments || []) if (s.section === sec && s.line && !m.has(s.line)) m.set(s.line, s.lineName || s.line); return [...m.entries()]; }
+function suggestSection(txt) { const t = normName(txt); if (t.length < 4) return ''; let best = '', bd = 99; for (const s of segSections()) { const d = lev(t, normName(s)); if (d < bd) { bd = d; best = s; } } return bd <= Math.max(2, Math.round(t.length * 0.25)) ? best : ''; }
+function suggestLine(sec, txt) {
+  if (!sec || !txt) return ''; const L = segLines(sec); const k = C.lineKey(txt);
+  const hit = L.find(([l, n]) => C.lineKey(l) === k || C.lineKey(n) === k); if (hit) return hit[0];
+  const w = String(txt).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3); const near = L.filter(([l]) => lev(w, String(C.lineKey(l) || l).toUpperCase()) <= 1);   // a misread letter, e.g. UR for UP
+  return near.length === 1 ? near[0][0] : '';
+}
+async function addShots(blobs) {
+  await shotSetup(); if (!S.B.segments || !S.B.segments.length) toast('Upload the Jurisdiction Details first – sections and lines come from it.', true);
+  for (const b of blobs) {
+    const sh = { id: 'S' + (++SH.seq), name: b.label || b.name || `Pasted screenshot ${SH.list.length + 1}`, blob: b, url: URL.createObjectURL(b), status: 'reading', r: null, section: '', line: '', checked: false };
+    SH.list.push(sh); drawShots();
+    try {
+      const img = await decodeImage(b); sh.img = img;
+      const res = await readInWorker(sh, img); if (res.err) throw new Error(res.err);
+      sh.r = res.r; sh.status = sh.r.kind && sh.r.kind !== 'mixed' ? 'done' : 'unknown';
+      sh.orig = JSON.stringify(sh.r.tables.map(t => [t.rows.map(r => Object.fromEntries(Object.entries(r.cells).map(([k, c]) => [k, c.text]))), (t.runs || []).map(x => x.text)]));
+      // section / line: from the page title when it can be read, else the same as the previous screenshot of this kind
+      const prev = SH.list.filter(x => x !== sh && x.r && x.r.kind === sh.r.kind && x.section).pop();
+      sh.section = suggestSection(sh.r.sectionText) || (prev ? prev.section : ''); sh.line = suggestLine(sh.section, sh.r.lineText) || (prev && prev.section === sh.section ? prev.line : '');
+      sh.asOn = sh.r.printed || (prev ? prev.asOn : '') || S.B.today;
+      sh.doubt = sh.r.tables.reduce((a, t) => a + t.rows.reduce((b, r) => b + r.doubt, 0) + (t.runs || []).filter(x => x.doubt).length, 0);
+      sh.rows = sh.r.tables.reduce((a, t) => a + t.rows.length, 0);
+    } catch (e) { sh.status = 'error'; sh.err = e.message || String(e); }
+    drawShots();
+  }
+}
+function drawShots() {
+  const el = $('shotList'); if (!el) return;
+  if (!SH.list.length) { el.innerHTML = '<div class="muted small">No screenshots yet.</div>'; drawQueue(); return; }
+  const secs = segSections();
+  el.innerHTML = SH.list.map(sh => {
+    const st = sh.status === 'reading' ? '<span class="muted">reading…</span>' : sh.status === 'error' ? `<span class="od">could not read: ${esc(sh.err)}</span>` : sh.status === 'unknown' ? `<span class="od">${esc((sh.r.notes || [])[0] || 'Not an IMR history or OMS comparative summary page')}</span>` : `<b>${esc(SHOT_KIND[sh.r.kind])}</b> · ${sh.rows} rows`;
+    const ok = sh.status === 'done';
+    return `<div class="shotrow${ok && !sh.checked ? ' todo' : ''}" data-id="${sh.id}"><div class="shotname"><span class="small">${esc(sh.name)}</span> <span class="small">${st}</span>
+        <span class="right">${ok ? (sh.checked ? '<span class="tag tg">Checked</span>' : sh.doubt ? `<span class="tag t1">${sh.doubt} doubtful</span>` : '<span class="tag">Not checked</span>') : ''}<button class="btn ghost sm" data-a="del" title="Remove from the list">✕</button></span></div>
+      ${ok ? `<div class="shotctl"><select data-f="section"><option value="">Section…</option>${secs.map(s => `<option ${s === sh.section ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
+        <select data-f="line"><option value="">Line…</option>${segLines(sh.section).map(([l, n]) => `<option value="${esc(l)}" ${l === sh.line ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+        <button class="btn ${sh.checked ? 'ghost' : 'primary'} sm" data-a="check">${sh.checked ? 'Open' : 'Check against picture'}</button></div>` : ''}</div>`;
+  }).join('');
+  el.querySelectorAll('.shotrow').forEach(tr => {
+    const sh = SH.list.find(x => x.id === tr.dataset.id);
+    tr.querySelectorAll('select').forEach(s => s.onchange = () => { sh[s.dataset.f] = s.value; if (s.dataset.f === 'section') sh.line = ''; sh.checked = false; drawShots(); });
+    const b = tr.querySelector('[data-a=check]'); if (b) b.onclick = () => checkShot(sh);
+    tr.querySelector('[data-a=del]').onclick = () => { URL.revokeObjectURL(sh.url); SH.list = SH.list.filter(x => x !== sh); drawShots(); };
+  });
+  drawQueue();
+}
+
+// ---------- check one screenshot against its picture ----------
+const IMR_F = [['sr', 'Sr.No.'], ['km', 'km'], ['m', 'm'], ['rail', 'LR/RR'], ['status', 'Status'], ['tested', 'Date of testing'], ['removed', 'Removed on']];
+const VALID = { sr: v => /^\d{1,4}$/.test(v), km: v => /^\d{1,4}$/.test(v), m: v => /^\d{1,4}(\.\d{1,3})?$/.test(v) && +v <= 1200, rail: v => /^(LR|RR)$/.test(v), status: v => /^[A-Z ()]{3,12}$/.test(v) && /IMR/.test(v),
+  tested: v => validDate(v), removed: v => !v || validDate(v), cnt: v => !v || /^\d{1,3}$/.test(v) };
+function validDate(v) { const m = /^(\d\d)\/(\d\d)\/(\d{4})$/.exec(v); if (!m) return false; const d = new Date(+m[3], +m[2] - 1, +m[1]); return d.getDate() === +m[1] && d.getMonth() === +m[2] - 1 && +m[3] >= 1990 && d <= new Date(Date.now() + 864e5); }
+function checkShot(sh) {
+  const r = sh.r; let ov = $('shotChk'); if (!ov) { ov = document.createElement('div'); ov.id = 'shotChk'; ov.className = 'shotchk'; document.body.appendChild(ov); }
+  const secs = segSections();
+  // every value sits under its own piece of the picture, so it can be compared at a glance
+  const crop = b => b ? `<canvas class="crop" data-box="${b.join(',')}" width="${b[2] - b[0]}" height="${b[3] - b[1]}"></canvas>` : '';
+  const cellIn = (ti, ri, k, c, f) => `<div class="pair">${crop(c.box)}<input class="sv${c.doubt ? ' bad' : ''}" data-t="${ti}" data-r="${ri}" data-k="${k}" data-f="${f}" value="${esc(c.text)}" spellcheck="false" autocomplete="off" style="width:${Math.max(44, c.box ? c.box[2] - c.box[0] : 60)}px"></div>`;
+  let body = '';
+  r.tables.forEach((t, ti) => {
+    if (t.kind === 'imr') body += `<table class="t shotgrid"><thead><tr>${IMR_F.map(([, n]) => `<th>${n}</th>`).join('')}</tr></thead><tbody>${t.rows.map((row, ri) => `<tr class="${row.doubt ? 'dbt' : ''}">${IMR_F.map(([k]) => `<td>${cellIn(ti, ri, k, row.cells[k], k)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    if (t.kind === 'oms') {
+      body += `<div class="runs">${t.runs.map((ru, i) => `<div class="pair run">${crop(ru.box)}<input class="sv${ru.doubt ? ' bad' : ''}" data-t="${ti}" data-run="${i}" value="${esc(ru.text)}" spellcheck="false" style="width:${ru.box[2] - ru.box[0]}px"></div>`).join('')}</div>`;
+      body += `<table class="t shotgrid oms"><thead><tr><th>Sr</th><th>km</th>${t.runs.map(ru => `<th colspan="2">Run ${ru.idx}<div class="small">V · L</div></th>`).join('')}</tr></thead><tbody>${t.rows.map((row, ri) => `<tr class="${row.doubt ? 'dbt' : ''}"><td>${cellIn(ti, ri, 'sr', row.cells.sr, 'sr')}</td><td>${cellIn(ti, ri, 'km', row.cells.km, 'km')}</td>${t.runs.map((ru, i) => `<td>${cellIn(ti, ri, 'v' + i, row.cells['v' + i], 'cnt')}</td><td>${cellIn(ti, ri, 'l' + i, row.cells['l' + i], 'cnt')}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    }
+    if (t.problems.length) body += `<div class="od small">${esc(t.problems.join('; '))} – this table was not read. Take the screenshot again with the whole table heading visible.</div>`;
+  });
+  ov.innerHTML = `<div class="shotbar"><b>${esc(sh.name)}</b> <span class="muted">${esc(SHOT_KIND[r.kind])}</span>
+      <label>Section <select id="ckSec"><option value="">– choose –</option>${secs.map(s => `<option ${s === sh.section ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></label>
+      <label>Line <select id="ckLine"></select></label>${r.kind === 'oms' ? `<label>As on <input id="ckAsOn" type="date" value="${esc(sh.asOn || '')}"></label>` : ''}
+      <span class="right"><button class="btn secondary" id="ckZoom">Picture 100%</button><button class="btn secondary" id="ckClose">Close</button><button class="btn primary" id="ckOk">Values agree with the picture – confirm</button></span></div>
+    <div class="shotpic" id="ckPic"><canvas id="ckCv"></canvas></div>
+    <div class="shothelp">Each value is shown under its piece of the screenshot. Compare them – above all the ones in <b class="od">red</b> – and correct a value if it differs. Dates as dd/mm/yyyy, cross rail LR or RR. Corrections teach the reader, so the same mistake does not come back.</div>
+    <div class="shotvals">${body}</div>`;
+  const fillLines = () => { $('ckLine').innerHTML = `<option value="">– choose –</option>` + segLines($('ckSec').value).map(([l, n]) => `<option value="${esc(l)}" ${l === sh.line ? 'selected' : ''}>${esc(n)}</option>`).join(''); };
+  $('ckSec').onchange = () => { sh.line = ''; fillLines(); }; fillLines();
+  // picture with all read cells framed; doubtful ones in red
+  const cv = $('ckCv'), img = new Image(); let full = false, hi = null;
+  const draw = () => {
+    const pw = $('ckPic').clientWidth - 4, sc = full ? 1 : Math.min(1, pw / sh.img.w); cv.width = Math.round(sh.img.w * sc); cv.height = Math.round(sh.img.h * sc);
+    const x = cv.getContext('2d'); x.drawImage(img, 0, 0, cv.width, cv.height); x.lineWidth = 1;
+    r.tables.forEach(t => { t.rows.forEach(row => Object.values(row.cells).forEach(c => { if (!c.box || (!c.text && !c.doubt)) return; x.strokeStyle = c.doubt ? 'rgba(200,20,20,.9)' : 'rgba(20,120,60,.45)'; x.strokeRect(c.box[0] * sc + .5, c.box[1] * sc + .5, (c.box[2] - c.box[0]) * sc, (c.box[3] - c.box[1]) * sc); }));
+      (t.runs || []).forEach(ru => { x.strokeStyle = ru.doubt ? 'rgba(200,20,20,.9)' : 'rgba(20,120,60,.45)'; x.strokeRect(ru.box[0] * sc + .5, ru.box[1] * sc + .5, (ru.box[2] - ru.box[0]) * sc, (ru.box[3] - ru.box[1]) * sc); }); });
+    if (hi) { x.lineWidth = 3; x.strokeStyle = '#0a58ca'; x.strokeRect(hi[0] * sc - 2, hi[1] * sc - 2, (hi[2] - hi[0]) * sc + 4, (hi[3] - hi[1]) * sc + 4); const p = $('ckPic'); p.scrollTop = Math.max(0, hi[1] * sc - p.clientHeight / 2); p.scrollLeft = Math.max(0, hi[0] * sc - p.clientWidth / 2); }
+  };
+  img.onload = () => { draw(); ov.querySelectorAll('canvas.crop').forEach(c => { const [x0, y0, x1, y1] = c.dataset.box.split(',').map(Number); c.getContext('2d').drawImage(img, x0, y0, x1 - x0, y1 - y0, 0, 0, x1 - x0, y1 - y0); }); }; img.src = sh.url;
+  $('ckZoom').onclick = () => { full = !full; $('ckZoom').textContent = full ? 'Fit picture' : 'Picture 100%'; draw(); };
+  ov.querySelectorAll('input.sv').forEach(inp => inp.onfocus = () => { const t = r.tables[+inp.dataset.t]; hi = inp.dataset.run != null ? t.runs[+inp.dataset.run].box : t.rows[+inp.dataset.r].cells[inp.dataset.k].box; draw(); });
+  ov.querySelectorAll('input.sv').forEach(inp => inp.oninput = () => inp.classList.remove('bad'));
+  const close = () => { ov.remove(); drawShots(); };
+  $('ckClose').onclick = close;
+  $('ckOk').onclick = async () => {
+    const sec = $('ckSec').value, line = $('ckLine').value; if (!sec || !line) { toast('Choose the section and the line of this report', true); return; }
+    const errs = []; const changed = [];
+    ov.querySelectorAll('input.sv').forEach(inp => {
+      const t = r.tables[+inp.dataset.t]; let v = inp.value.trim().toUpperCase().replace(/\s+/g, ' ');
+      if (inp.dataset.run != null) { const ru = t.runs[+inp.dataset.run]; const p = C.parseRun(v); if (!p.ok) { errs.push(inp); return; } if (p.text !== ru.text) changed.push({ lines: ru.lines, text: v }); ru.text = p.text; ru.month = p.month; ru.id = p.id; ru.doubt = false; return; }
+      if (inp.dataset.f !== 'status') v = v.replace(/\s+/g, ''); const c = t.rows[+inp.dataset.r].cells[inp.dataset.k];
+      if (!VALID[inp.dataset.f](v)) { errs.push(inp); return; }
+      if (v !== c.text && v) changed.push({ line: c.line, text: v }); c.text = v; c.doubt = false;
+    });
+    if (errs.length) { errs.forEach(i => i.classList.add('bad')); errs[0].focus(); toast(`${errs.length} value(s) are not in the right form – see the red boxes`, true); return; }
+    r.tables.forEach(t => t.rows.forEach(row => row.doubt = 0));
+    sh.section = sec; sh.line = line; if ($('ckAsOn')) sh.asOn = $('ckAsOn').value || S.B.today; sh.checked = true; sh.doubt = 0;
+    close(); if (changed.length) learnFrom(sh, changed);
+  };
+}
+// corrected values become new glyph samples (kept on the server, shared by every admin PC)
+async function learnFrom(sh, changed) {
+  try {
+    const G = C.greyShot(sh.img); const add = [];
+    for (const ch of changed) {
+      if (ch.line) add.push(...C.learnShot(SH.T, G, ch.line, ch.text));
+      else if (ch.lines && ch.lines.length) add.push(...C.learnShot(SH.T, G, ch.lines[ch.lines.length - 1].line, ch.text));
+    }
+    if (!add.length) return;
+    if (SH.worker) SH.worker.postMessage({ add });
+    for (let i = 0; i < add.length; i += 100) await call('ocrLearn', { glyphs: add.slice(i, i + 100) });
+    toast(`Reader learnt ${add.length} new character shape(s) from your corrections`);
+  } catch (e) { /* learning is optional */ }
+}
+function shotSets() {
+  const done = SH.list.filter(s => s.status === 'done'); const sets = new Map();
+  for (const s of done) { const k = [s.r.kind, s.section, s.line].join('|'); if (!sets.has(k)) sets.set(k, { kind: s.r.kind, section: s.section, line: s.line, shots: [] }); sets.get(k).shots.push(s); }
+  return [...sets.values()].map(g => {
+    if (g.kind === 'imr') return { kind: 'imr', records: C.imrRecords(g.shots.map(s => s.r), g.section, g.line), scope: { section: g.section, line: g.line }, asOn: S.B.today, file: g.shots.map(s => s.name).join(', ') };
+    const o = C.omsRecords(g.shots.map(s => s.r), g.section, g.line); const asOn = g.shots.map(s => s.asOn).filter(Boolean).sort().pop() || S.B.today;
+    return { kind: 'oms', records: o.records, runs: o.runs, scope: { section: g.section, line: g.line }, asOn, file: g.shots.map(s => s.name).join(', ') };
+  });
+}
+function onShotPaste(e) {
+  if (S.view !== 'upload' || !$('shotPaste')) return;
+  const items = [...(e.clipboardData && e.clipboardData.items || [])].filter(i => i.kind === 'file' && /^image\//.test(i.type));
+  if (!items.length) { if (e.target && e.target.closest && e.target.closest('#shotPaste')) { e.preventDefault(); toast('No picture on the clipboard. Take the screenshot first (Windows key + Shift + S), then press Ctrl+V here.', true); } return; }
+  e.preventDefault();
+  const t = new Date(); const stamp = [t.getHours(), t.getMinutes(), t.getSeconds()].map(x => String(x).padStart(2, '0')).join('.');
+  addShots(items.map((i, k) => { const f = i.getAsFile(); const n = `Pasted ${stamp}${items.length > 1 ? '-' + (k + 1) : ''}.png`; try { return new File([f], n, { type: f.type || 'image/png' }); } catch (er) { return Object.assign(f, { label: n }); } }));
+}
+function wireShots() {
+  if (!$('shotPaste')) return;
+  if (!SH.pasteWired) { SH.pasteWired = true; document.addEventListener('paste', onShotPaste); }
+  $('pkShots').onclick = e => { e.stopPropagation(); $('inShots').click(); };
+  $('inShots').onchange = e => { const f = [...e.target.files].filter(x => /\.(png|jpe?g)$/i.test(x.name)); e.target.value = ''; if (f.length) addShots(f); };
+  drawShots();
 }
 
 // ---------- users ----------

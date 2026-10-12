@@ -2051,6 +2051,440 @@ function parsePaste(kind, { tables, title }) {
 
 return { isMainOG, classifyKpiSheet, parseKpiSheet, weldDigest, tablesFromPaste, classifyPaste, parsePaste, isoDate: iso };
 })();
+__m['shotocr.js'] = (function(){
+// Screenshot reader for TMS web report pages (OMS peaks comparative summary, OMS accn. peaks, IMR testing history …).
+// Dependency-free: finds the table grid (row bands and cell borders) and reads each cell with glyph templates
+// learnt from TMS screenshots. Works on images from decodePNG() / canvas: {w, h, g3} with g3 = R+G+B.
+
+const OH = 15, OMAXW = 14;   // glyph window height (rows) and widest single glyph (px)
+const CUT = 120;                     // ink threshold (0..255) used to separate glyphs
+
+function grey(im) { const n = im.w * im.h, g = new Uint8Array(n); for (let i = 0; i < n; i++) g[i] = Math.round(im.g3[i] / 3); return { w: im.w, h: im.h, g }; }
+
+function rowMode(G, y, x0 = 0, x1 = G.w) { const hst = new Uint32Array(256); for (let x = x0; x < x1; x++) hst[G.g[y * G.w + x]]++; let b = 0; for (let v = 1; v < 256; v++) if (hst[v] > hst[b]) b = v; return [b, hst[b] / (x1 - x0)]; }
+
+// horizontal bands of one background colour (table rows, header blocks, gaps)
+function bands(G) {
+  const m = []; for (let y = 0; y < G.h; y++) m.push(rowMode(G, y));
+  const out = []; let s = 0;
+  for (let y = 1; y <= G.h; y++) if (y === G.h || Math.abs(m[y][0] - m[s][0]) > 3) { out.push({ y0: s, y1: y, bg: m[s][0] }); s = y; }
+  return out;
+}
+
+// vertical cell borders inside a group of bands: a column of constant colour, different from the background, in most bands
+function columns(G, bl, x0 = 0, x1 = G.w) {
+  const W = x1 - x0, score = new Float32Array(W);
+  for (const b of bl) {
+    for (let x = x0; x < x1; x++) {
+      let mn = 255, mx = 0, sum = 0, n = 0;
+      for (let y = b.y0 + 2; y < b.y1 - 2; y++) { const v = G.g[y * G.w + x]; if (v < mn) mn = v; if (v > mx) mx = v; sum += v; n++; }
+      if (n && mx - mn <= 6 && Math.abs(sum / n - b.bg) >= 4) score[x - x0]++;
+    }
+  }
+  const xs = []; for (let i = 0; i < W; i++) if (score[i] >= bl.length * 0.6) xs.push(i + x0);
+  const grp = []; for (const x of xs) { const g = grp[grp.length - 1]; if (g && x - g[g.length - 1] <= 1) g.push(x); else grp.push([x]); }
+  // a long run touching the picture edge is page margin + the table's outer border: keep only its inner end
+  const br = grp.map(g => g.length <= 3 ? [g[0], g[g.length - 1]] : g[0] <= x0 + 1 ? [g[g.length - 1], g[g.length - 1]] : g[g.length - 1] >= x1 - 2 ? [g[0], g[0]] : null).filter(Boolean);
+  const cols = []; for (let i = 0; i + 1 < br.length; i++) if (br[i + 1][0] - br[i][1] > 4) cols.push({ x0: br[i][1] + 1, x1: br[i + 1][0] });
+  return cols;
+}
+
+// ink 0..255 relative to the local background
+function inkAt(G, x, y, bg) { const v = bg - G.g[y * G.w + x]; return v > 0 ? v : 0; }
+
+// text lines (rows that carry ink) inside a box
+function textLines(G, y0, y1, x0, x1, bg, thr = 70) {
+  const out = []; let s = -1;
+  for (let y = y0; y < y1; y++) {
+    let any = false; for (let x = x0; x < x1; x++) if (inkAt(G, x, y, bg) >= thr) { any = true; break; }
+    if (any && s < 0) s = y; if (!any && s >= 0) { out.push([s, y]); s = -1; }
+  }
+  if (s >= 0) out.push([s, y1]);
+  return out.filter(([a, b]) => b - a >= 3);
+}
+
+// glyph bitmap: OH rows from top-2, values scaled so the darkest ink of the line = 255
+function glyph(G, top, xa, xb, bg, scale) {
+  const W = xb - xa, q = new Uint8Array(OH * W);
+  for (let y = 0; y < OH; y++) { const yy = top - 2 + y; if (yy < 0 || yy >= G.h) continue; for (let x = 0; x < W; x++) q[y * W + x] = Math.min(255, Math.round(inkAt(G, xa + x, yy, bg) * scale)); }
+  return q;
+}
+
+const NORM = 255 * 255 * OH * 6;
+const SHIFTS = [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];     // absolute: unexplained ink costs the same whatever the glyph width
+const qsum = q => { let t = 0; for (let i = 0; i < q.length; i++) t += q[i]; return t; };
+// a digit glyph that carries a decimal point at its edge (bad cut while learning) must not become a template
+function dotAppendix(ch, q, w) {
+  if (!/[013-9]/.test(ch) || w < 4) return false;
+  let yb = -1; for (let y = OH - 1; y >= 0 && yb < 0; y--) for (let x = 0; x < w; x++) if (q[y * w + x] >= 60) { yb = y; break; }
+  if (yb < 4) return false;
+  const bottomOnly = x => { let lo = 0, hi = 0; for (let y = 0; y < OH; y++) { const v = q[y * w + x]; if (y >= yb - 2) hi = Math.max(hi, v); else lo = Math.max(lo, v); } return hi >= 60 && lo < 40; };
+  return bottomOnly(w - 1) || (ch !== '9' && bottomOnly(0));
+}
+class ShotTemplates {
+  constructor(list = []) { this.t = []; this.cache = new Map(); for (const x of list) this.push(x.ch, Uint8Array.from(x.q), x.w); }
+  push(ch, q, w) { this.t.push({ ch, w, q, s: qsum(q) }); this.cache.clear(); }
+  add(ch, q, w, tol = 0.012) { let mx = 0; for (let i = 0; i < q.length; i++) if (q[i] > mx) mx = q[i]; if (mx < 110 || dotAppendix(ch, q, w)) return false; for (const t of this.t) if (t.ch === ch && t.w === w && this.dist(q, w, t) < tol) return false; this.push(ch, Uint8Array.from(q), w); return true; }
+  // squared difference over the best small shift (x ±1, y ±1), divided by NORM; stops early once above `bound`
+  dist(q, w, t, bound = Infinity, qs) {
+    const wt = t.w, tq = t.q, lim = bound * NORM;
+    if (qs != null) { const d = qs - t.s; if (d * d / (OH * (Math.max(w, wt) + 2)) >= lim) return Infinity; }   // Cauchy–Schwarz lower bound
+    let bestS = lim;
+    for (const [r, dy] of SHIFTS) {   // template origin at x = r relative to the query, rows moved by dy
+      const xs = Math.min(0, r), xe = Math.max(w, r + wt); let s = 0;
+      outer: for (let y = 0; y < OH; y++) { const yb = y + dy, rowB = yb >= 0 && yb < OH; for (let x = xs; x < xe; x++) {
+        const A = x >= 0 && x < w ? q[y * w + x] : 0, xb = x - r, B = rowB && xb >= 0 && xb < wt ? tq[yb * wt + xb] : 0;
+        if (A !== B) { s += (A - B) * (A - B); if (s >= bestS) break outer; } } }
+      if (s < bestS) bestS = s;
+    }
+    return bestS >= lim ? Infinity : bestS / NORM;
+  }
+  widths(alpha) { const k = 'W|' + (alpha || ''); let r = this.cache.get(k); if (r) return r; let lo = 99, hi = 0; for (const t of this.t) if (!alpha || alpha.includes(t.ch)) { lo = Math.min(lo, t.w); hi = Math.max(hi, t.w); } r = [Math.max(1, lo - 1), Math.min(OMAXW, hi + 1)]; this.cache.set(k, r); return r; }
+  key(q, w) { let k = w + ':'; for (let i = 0; i < q.length; i++) k += String.fromCharCode(q[i] + 32); return k; }
+  // best match (optionally only among the characters in alpha) → [ch, dist]
+  best(q, w, alpha) {
+    const key = this.key(q, w) + '|' + (alpha || ''); const c = this.cache.get(key); if (c !== undefined) return c;
+    const qs = qsum(q); let r = null, bd = Infinity;
+    for (const t of this.t) { if (Math.abs(w - t.w) > 1 || (alpha && !alpha.includes(t.ch))) continue; const d = this.dist(q, w, t, bd, qs); if (d < bd) { bd = d; r = [t.ch, d]; } }
+    if (this.cache.size > 300000) this.cache.clear();
+    this.cache.set(key, r); return r;
+  }
+  dist1(q, w, ch) { const r = this.best(q, w, ch); return r ? r[1] : null; }
+  toJSON() { return this.t.map(t => ({ ch: t.ch, w: t.w, q: Array.from(t.q) })); }
+}
+
+// column ink profile of one text line: max ink in each column
+const LOW = 32;               // a column with less ink than this is blank
+function profile(G, top, bot, x0, x1, bg) { const p = new Uint8Array(Math.max(0, x1 - x0)); for (let x = x0; x < x1; x++) { let m = 0; for (let y = top; y < bot; y++) { const v = inkAt(G, x, y, bg); if (v > m) m = v; } p[x - x0] = m; } return p; }
+// words: runs of ink columns separated by >= 3 blank columns → [[a,b)…]
+function words(G, top, bot, x0, x1, bg) {
+  const p = profile(G, top, bot, x0, x1, bg), out = []; let s = -1, last = -9;
+  for (let i = 0; i < p.length; i++) if (p[i] >= LOW) { if (s < 0) s = i; else if (i - last > 3) { out.push([s + x0, last + 1 + x0]); s = i; } last = i; }
+  if (s >= 0) out.push([s + x0, last + 1 + x0]);
+  return out;
+}
+// atoms (kept for training bootstrap): runs of ink columns, gap >= 1
+function atoms(G, top, bot, x0, x1, bg) {
+  const p = profile(G, top, bot, x0, x1, bg), out = []; let s = -1;
+  for (let i = 0; i <= p.length; i++) { const ink = i < p.length && p[i] >= LOW; if (ink && s < 0) s = i; if (!ink && s >= 0) { out.push([s + x0, i + x0]); s = -1; } }
+  return out;
+}
+function cellScale(G, top, bot, xa, xb, bg) { let mx = 0; for (let y = top; y < bot; y++) for (let x = xa; x < xb; x++) { const v = inkAt(G, x, y, bg); if (v > mx) mx = v; } return mx ? Math.min(2.2, 255 / mx) : 1; }
+
+// best reading of one word [a,b): DP over every column; a glyph starts and ends on ink, blank columns are skipped
+const PEN = 0.0025;
+function readWord(T, G, top, bot, a, b, bg, scale, alpha) {
+  const W = b - a, p = profile(G, top, bot, a, b, bg), best = new Array(W + 1).fill(null); best[W] = [0, '', 0, [], []]; const [wlo, whi] = T.widths(alpha);
+  for (let i = W - 1; i >= 0; i--) {
+    let r = null;
+    if (p[i] < LOW) { best[i] = best[i + 1]; continue; }
+    let jmax = i + 1; while (jmax < W && !(p[jmax] < LOW && (jmax + 1 >= W || p[jmax + 1] < LOW)) && jmax - i < whi) jmax++;   // a glyph never spans a gap of two blank columns
+    for (let j = i + wlo; j <= jmax; j++) {
+      if (p[j - 1] < LOW || !best[j]) continue;
+      const sc = T.best(glyph(G, top, a + i, a + j, bg, scale), j - i, alpha); if (!sc) continue;
+      const tot = sc[1] + PEN + best[j][0];
+      if (!r || tot < r[0]) r = [tot, sc[0] + best[j][1], 1 + best[j][2], [sc[1]].concat(best[j][3]), [[a + i, a + j]].concat(best[j][4])];
+    }
+    best[i] = r;
+  }
+  return best[0];
+}
+// read one text line in a box → {text, cost (mean per glyph), worst (largest glyph distance)}
+function readLine(T, G, top, bot, x0, x1, bg, alpha) {
+  const Wd = words(G, top, bot, x0, x1, bg); if (!Wd.length) return { text: '', cost: 0, worst: 0, n: 0 };
+  const scale = cellScale(G, top, bot, Wd[0][0], Wd[Wd.length - 1][1], bg);
+  let text = '', cost = 0, n = 0, worst = 0; const segs = [];
+  for (const [a, b] of Wd) {
+    const r = readWord(T, G, top, bot, a, b, bg, scale, alpha) || [1, '?', 1, [1], [[a, b]]];
+    if (text) text += ' '; text += r[1]; cost += r[0]; n += r[2]; for (const d of r[3]) if (d > worst) worst = d; segs.push(...r[4].map((x, i) => [r[1][i], x[0], x[1], r[3][i]]));
+  }
+  return { text, cost: n ? cost / n : 0, worst, n, segs, x0: Wd[0][0], x1: Wd[Wd.length - 1][1] };
+}
+// forced alignment of a known text (training / learning from corrections): returns [[ch, xa, xb]…] or null
+function alignLine(T, G, top, bot, x0, x1, bg, txt, unknown = 0.12) {
+  const Wd = words(G, top, bot, x0, x1, bg), ch = [...String(txt).replace(/\s+/g, '')];
+  if (!Wd.length || !ch.length) return null;
+  const a = Wd[0][0], b = Wd[Wd.length - 1][1], n = ch.length, W = b - a, p = profile(G, top, bot, a, b, bg);
+  const scale = cellScale(G, top, bot, a, b, bg), has = new Set(T.t.map(t => t.ch));
+  // best[i][c]: cost to read columns [i,W) as ch[c..]; blank columns are skipped free
+  const best = Array.from({ length: W + 1 }, () => new Array(n + 1).fill(null)); best[W][n] = [0, null];
+  for (let i = W - 1; i >= 0; i--) for (let c = n; c >= 0; c--) {
+    let r = null;
+    if (p[i] < LOW && best[i + 1][c]) r = [best[i + 1][c][0], [i + 1, c, null]];
+    let jmax = i + 1; while (jmax < W && !(p[jmax] < LOW && (jmax + 1 >= W || p[jmax + 1] < LOW)) && jmax - i < OMAXW) jmax++;
+    if (c < n && p[i] >= LOW) for (let j = i + 1; j <= jmax; j++) {
+      if (p[j - 1] < LOW || !best[j][c + 1]) continue;
+      const d = has.has(ch[c]) ? T.dist1(glyph(G, top, a + i, a + j, bg, scale), j - i, ch[c]) : unknown + (j - i < 2 ? 0.2 : 0);
+      if (d == null) continue;
+      const tot = d + best[j][c + 1][0];
+      if (!r || tot < r[0]) r = [tot, [j, c + 1, [ch[c], a + i, a + j]]];
+    }
+    best[i][c] = r;
+  }
+  if (!best[0][0]) return null;
+  const out = []; let i = 0, c = 0; while (i < W) { const st = best[i][c]; if (!st) return null; const [ni, nc, seg] = st[1]; if (seg) out.push(seg); i = ni; c = nc; }
+  return { segs: out, scale, cost: best[0][0][0] / n };
+}
+
+// table layout: row bands of body rows (white / light grey / highlighted), the header band above, and cell borders
+function layoutTables(G) {
+  const B = bands(G).filter(b => b.y1 - b.y0 >= 6);
+  const isBody = b => b.bg >= 225 && b.y1 - b.y0 >= 14 && b.y1 - b.y0 <= 40;
+  const groups = []; let cur = null;
+  for (const b of B) { if (isBody(b)) { if (cur && b.y0 - cur[cur.length - 1].y1 <= 4) cur.push(b); else { cur = [b]; groups.push(cur); } } else if (b.y1 - b.y0 > 6) cur = null; }
+  const out = [];
+  for (const grp of groups) {
+    const head = B.filter(b => b.y1 <= grp[0].y0 + 3 && b.y1 >= grp[0].y0 - 12 && b.bg < 225 && b.y1 - b.y0 >= 14).pop() || null;
+    const cols = columns(G, grp.length >= 2 ? grp : grp.concat(head ? [head] : []));
+    if (cols.length < 2) continue;
+    const rows = grp.map(b => {
+      // text line of the row = most common first ink line over the cells (cell interiors only, borders excluded)
+      const tops = {}, bots = {};
+      for (const c of cols) { const L = textLines(G, b.y0 + 1, b.y1 - 1, c.x0 + 2, c.x1 - 2, b.bg); if (!L.length) continue; const t = L[0][0]; tops[t] = (tops[t] || 0) + 1; bots[t] = Math.max(bots[t] || 0, L[L.length - 1][1]); }
+      const ks = Object.keys(tops).map(Number); let top = b.y0 + 4, bot = b.y1 - 4;
+      if (ks.length) { const t = ks.reduce((p, q) => tops[q] > tops[p] || (tops[q] === tops[p] && q < p) ? q : p); top = t; bot = Math.max(...ks.filter(k => Math.abs(k - t) <= 3).map(k => bots[k])); }
+      const partial = b.y1 - b.y0 < 15 || top <= b.y0 + 1 || bot >= b.y1 - 1;
+      return { y0: b.y0, y1: b.y1, bg: b.bg, partial, top, bot };
+    });
+    out.push({ header: head ? { y0: head.y0, y1: head.y1, bg: head.bg } : null, cols, rows });
+  }
+  return out;
+}
+// read every table in a screenshot. Returns {G, tables:[{header, cols, rows:[{y0,y1,bg,partial,cells:[{text,cost}]}]}]}
+function readTables(T, im) {
+  const G = im.g ? im : grey(im);
+  const tables = layoutTables(G);
+  for (const t of tables) for (const r of t.rows) r.cells = t.cols.map(c => readLine(T, G, r.top, r.bot + 1, c.x0 + 2, c.x1 - 2, r.bg));
+  return { G, tables };
+}
+
+// free text block (titles, run headers): all lines inside a box
+function readBlock(T, G, y0, y1, x0, x1, bg) {
+  if (bg == null) bg = rowMode(G, y0, x0, x1)[0];
+  return textLines(G, y0, y1, x0, x1, bg).map(([a, b]) => readLine(T, G, a, b + 1, x0, x1, bg).text);
+}
+// background of a box = most common grey value
+function rowBg(G, y0, y1, x0, x1) { const h = new Uint32Array(256); for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) h[G.g[y * G.w + x]]++; let b = 0; for (let v = 1; v < 256; v++) if (h[v] > h[b]) b = v; return b; }
+
+return { OH, grey, bands, columns, textLines, glyph, ShotTemplates, LOW, profile, words, atoms, readLine, alignLine, layoutTables, readTables, readBlock, rowBg };
+})();
+__m['shots.js'] = (function(){
+// Reads screenshots of TMS web report pages into records:
+//   IMR testing history (rail / weld / SEJ-turnout defect tables)  → kind 'imr'
+//   OMS peaks km-wise comparative summary                           → kind 'oms'
+// Every value keeps its place on the picture and a doubt flag, so the admin can check it against the picture before upload.
+const {grey, layoutTables, readLine, textLines, rowBg, bands, alignLine, glyph, ShotTemplates} = __m['shotocr.js'];
+
+const AL = { int: '0123456789', num: '0123456789.', date: '0123456789/', rail: 'LR', status: 'IMRSTW()', any: null,
+  probe: '0123456789/.LRIMSTW()-', run: 'RUN0123456789:', runid: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/_' };
+const DOUBT = 0.035;           // glyph distance above which a value is shown as doubtful
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+function imageFromRGBA(w, h, data) { const g3 = new Uint16Array(w * h); for (let i = 0, j = 0; i < g3.length; i++, j += 4) g3[i] = data[j] + data[j + 1] + data[j + 2]; return { w, h, g3 }; }
+
+function cell(T, G, row, col, alpha) {
+  const x0 = col.x0 + 2, x1 = col.x1 - 2; const r = readLine(T, G, row.top, row.bot + 1, x0, x1, row.bg, alpha);
+  return { text: r.text, worst: r.worst, box: [col.x0, row.y0, col.x1, row.y1], line: [row.top, row.bot + 1, x0, x1, row.bg] };
+}
+const nz = s => String(s || '').replace(/\s+/g, '');
+const isDate = s => /^(\d\d)\/(\d\d)\/(\d{4})$/.test(s) && (() => { const [d, m, y] = s.split('/').map(Number); return d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 1990 && y <= 2100; })();
+const isoOf = s => { const m = /^(\d\d)\/(\d\d)\/(\d{4})$/.exec(s); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
+const isInt = s => /^\d{1,4}$/.test(s);
+const isNum = s => /^\d{1,4}(\.\d{1,3})?$/.test(s);
+
+// which column holds what, from a few sample rows read with a small alphabet
+function sampleCols(T, G, tb) {
+  const rows = tb.rows.filter(r => !r.partial).slice(0, 5);
+  return tb.cols.map(col => rows.map(r => nz(cell(T, G, r, col, AL.probe).text)));
+}
+function srColumn(S) {
+  const F = S.map(c => c.filter(Boolean));
+  for (let c = 0; c < F.length; c++) { const v = F[c].map(Number); if (F[c].length >= 2 && F[c].every(isInt) && v.every((x, i) => i === 0 || x === v[i - 1] + 1)) return c; }
+  for (let c = 0; c < F.length; c++) if (F[c].length && F[c].filter(isInt).length >= F[c].length * 0.8) return c;
+  return -1;
+}
+const share = (arr, f) => arr.length ? arr.filter(f).length / arr.length : 0;
+
+// ---------- classify one screenshot ----------
+function readShot(T, im, name = '') {
+  const G = im.g ? im : grey(im);
+  const tables = layoutTables(G);
+  const out = { name, w: G.w, h: G.h, kind: null, tables: [], title: '', notes: [] };
+  // top text (titles) – used to suggest section / line / date
+  const big = tables.filter(t => t.cols.length >= 6); const firstTop = big.length ? Math.min(...big.map(t => (t.header || t.rows[0]).y0)) : G.h;
+  out.title = titleText(T, G, Math.max(0, firstTop - 260), firstTop);
+  for (const tb of tables) {
+    if (tb.rows.length < 1 || tb.cols.length < 6) continue;
+    const S = sampleCols(T, G, tb);
+    const stat = S.findIndex(c => share(c.filter(Boolean), v => /MR/.test(v)) >= 0.6 && c.some(Boolean));
+    if (stat >= 0) { out.tables.push(readIMR(T, G, tb, S, stat)); continue; }
+    if (tb.cols.length >= 9) { const o = readOMS(T, G, tb, S); if (o) out.tables.push(o); }
+  }
+  const kinds = [...new Set(out.tables.map(t => t.kind))];
+  out.kind = kinds.length === 1 ? kinds[0] : kinds.length ? 'mixed' : null;
+  if (!out.kind && /ACCN|RUN\s*NO|PEAKS?\)/i.test(out.title)) out.notes.push('OMS accn. peaks page – not used. Take the "OMS Peaks KM Wise Comparative Summary" page instead.');
+  const t = out.title.replace(/\s+/g, ' ');
+  let m;
+  if ((m = /SECTION\s*:?\s*([A-Za-z][A-Za-z .-]+?)\s+LIN\w*\s*:/i.exec(t))) out.sectionText = m[1];
+  if ((m = /LIN\w*\s*:\s*([A-Za-z0-9]+(?: Line)?)/i.exec(t))) out.lineText = m[1].trim();
+  if ((m = /PRI\w*\s*O\w*\s*[-.:]?\s*(\d\d\/\d\d\/\d{4})/i.exec(t) || /(\d\d\/\d\d\/\d{4})/.exec(t))) out.printed = isoOf(m[1]);
+  return out;
+}
+// text lines of a band, ignoring ruling lines (rows or columns inked over most of their length)
+function cleanLines(G, y0, y1, bg) {
+  const H = y1 - y0, ink = (x, y) => bg - G.g[y * G.w + x] >= 70; const colBad = new Uint8Array(G.w);
+  for (let x = 0; x < G.w; x++) { let n = 0; for (let y = y0; y < y1; y++) if (ink(x, y)) n++; if (n > H * 0.7) colBad[x] = 1; }
+  const rows = []; for (let y = y0; y < y1; y++) { let n = 0; for (let x = 0; x < G.w; x++) if (!colBad[x] && ink(x, y)) n++; rows.push(n > 0 && n < G.w * 0.4); }
+  const out = []; let s = -1; for (let i = 0; i <= H; i++) { const on = i < H && rows[i]; if (on && s < 0) s = i; if (!on && s >= 0) { out.push([y0 + s, y0 + i]); s = -1; } }
+  return out;
+}
+function titleText(T, G, y0, y1) {
+  if (y1 - y0 < 8) return '';
+  const out = [];
+  for (const b of bands(G)) {
+    if (b.y1 <= y0 || b.y0 >= y1 || b.bg < 235 || b.y1 - b.y0 < 8) continue;
+    for (const [a, c] of cleanLines(G, Math.max(b.y0, y0), Math.min(b.y1, y1), b.bg)) {
+      if (c - a < 6 || c - a > 16 || out.length >= 6) continue;
+      out.push(readLine(T, G, a, c + 1, 0, G.w, b.bg).text);
+    }
+  }
+  return out.join('\n');
+}
+
+// ---------- IMR testing history ----------
+function readIMR(T, G, tb, S, stat) {
+  const sr = srColumn(S); const dateCol = c => share(S[c].filter(Boolean), v => /^\d\d\/?\d\d\/?\d{4}$/.test(v)) >= 0.6;
+  let test = stat + 1; while (test < S.length && !dateCol(test)) test++;
+  let rem = S.length - 1; while (rem > test && !dateCol(rem)) rem--;
+  let rail = -1, best = 0; S.forEach((c, i) => { const f = share(c.filter(Boolean), v => /^[LR1I.]{1,3}R$/.test(v) && v.length <= 3); if (f > best) { best = f; rail = i; } });
+  const t = { kind: 'imr', box: [tb.cols[0].x0, (tb.header || tb.rows[0]).y0, tb.cols[tb.cols.length - 1].x1, tb.rows[tb.rows.length - 1].y1], rows: [], problems: [] };
+  if (sr < 0 || rem <= test || test >= S.length) { t.problems.push('Columns not recognised'); if (globalThis.SHOT_DEBUG) console.log(JSON.stringify(S)); return t; }
+  const cols = { sr, km: sr + 1, m: sr + 2, rail, status: stat, tested: test, removed: rem === test ? -1 : rem };
+  const spec = { sr: 'int', km: 'int', m: 'num', rail: 'rail', status: 'status', tested: 'date', removed: 'date' };
+  for (const row of tb.rows) {
+    if (row.partial) continue;
+    const r = { cells: {}, box: [tb.cols[0].x0, row.y0, tb.cols[tb.cols.length - 1].x1, row.y1] };
+    for (const [k, c] of Object.entries(cols)) { if (c < 0) { r.cells[k] = { text: '', worst: 0 }; continue; } const v = cell(T, G, row, tb.cols[c], AL[spec[k]]); v.text = fixText(spec[k], v.text); r.cells[k] = v; }
+    if (!r.cells.sr.text && !r.cells.km.text) continue;
+    check(r, { sr: isInt, km: isInt, m: v => isNum(v) && +v <= 1200, rail: v => /^(LR|RR)$/.test(v), status: v => /^(IMR|SR IMR|TR IMR|IMR\(W\)|[A-Z]{1,3} ?IMR(\(W\))?)$/.test(v), tested: isDate, removed: v => !v || isDate(v) });
+    t.rows.push(r);
+  }
+  t.cols = cols; return t;
+}
+
+// ---------- OMS peaks km-wise comparative summary ----------
+function readOMS(T, G, tb, S) {
+  const sr = srColumn(S); if (sr < 0 || tb.cols.length < sr + 6) return null;
+  const nRuns = Math.floor((tb.cols.length - sr - 3) / 3); if (nRuns < 1) return null;
+  // run headers: text in the grey band(s) above the column header, over each group of three columns
+  const head = tb.header; if (!head) return null;
+  const B = bands(G).filter(b => b.y1 <= head.y0 + 1 && b.y1 >= head.y0 - 60 && b.bg < 235);
+  const y0 = B.length ? Math.min(...B.map(b => b.y0)) : head.y0 - 34;
+  const runs = [];
+  for (let i = 0; i < nRuns; i++) {
+    const c0 = tb.cols[sr + 3 + i * 3], c2 = tb.cols[sr + 5 + i * 3]; const x0 = c0.x0 + 2, x1 = c2.x1 - 2;
+    const bg = rowBg(G, y0, head.y0, x0, x1); const L = textLines(G, y0, head.y0, x0, x1, bg).filter(([a, b]) => b - a >= 5);
+    const lines = L.map(([a, b]) => { const r = readLine(T, G, a, b + 1, x0, x1, bg); return { text: r.text, worst: r.worst, line: [a, b + 1, x0, x1, bg] }; });
+    const run = parseRun(lines.map(l => l.text).join(' '));
+    runs.push({ idx: i + 1, lines, box: [c0.x0, y0, c2.x1, head.y0], text: run.text, month: run.month, id: run.id, ok: run.ok, doubt: !run.ok || run.fixed || Math.max(0, ...lines.map(l => l.worst)) > DOUBT });
+  }
+  if (!runs.some(r => /RUN/.test(r.lines.map(l => l.text).join(' ')))) return null;
+  // runs run from the newest month backwards: a year that disagrees with both neighbours is a misread
+  runs.forEach((ru, i) => { const p = runs[i - 1], n = runs[i + 1]; if (!ru.month || !p || !n || !p.month || !n.month) return; const y = ru.month.slice(-2), py = p.month.slice(-2), ny = n.month.slice(-2);
+    if (py === ny && y !== py) { ru.month = ru.month.slice(0, -2) + py; ru.text = `${ru.month}/${ru.id}`; ru.doubt = true; } });
+  const t = { kind: 'oms', box: [tb.cols[0].x0, y0, tb.cols[tb.cols.length - 1].x1, tb.rows[tb.rows.length - 1].y1], runs, rows: [], problems: [] };
+  for (const row of tb.rows) {
+    if (row.partial) continue;
+    const r = { cells: {}, box: [tb.cols[0].x0, row.y0, tb.cols[tb.cols.length - 1].x1, row.y1] };
+    r.cells.sr = cell(T, G, row, tb.cols[sr], AL.int); r.cells.km = cell(T, G, row, tb.cols[sr + 1], AL.int);
+    if (!nz(r.cells.sr.text) && !nz(r.cells.km.text)) continue;
+    for (const k of ['sr', 'km']) r.cells[k].text = nz(r.cells[k].text);
+    for (let i = 0; i < nRuns; i++) {
+      const v = cell(T, G, row, tb.cols[sr + 3 + i * 3], AL.int), l = cell(T, G, row, tb.cols[sr + 4 + i * 3], AL.int);
+      v.text = nz(v.text); l.text = nz(l.text); r.cells['v' + i] = v; r.cells['l' + i] = l;
+    }
+    const f = { sr: isInt, km: isInt }; for (let i = 0; i < nRuns; i++) { f['v' + i] = v => !v || isInt(v); f['l' + i] = v => !v || isInt(v); }
+    check(r, f);
+    t.rows.push(r);
+  }
+  t.cols = { sr, nRuns }; return t;
+}
+function parseRun(s) {
+  const t = String(s).toUpperCase().replace(/\s+/g, ' ').trim().replace(/^.*?RUN\s*\d+\s*[:.]?\s*/, '');
+  // "MON-YY/ID": anchor on "YY/" – the month letters are before it, the run id after it
+  const m = /^([^0-9]*?)[-:.]?\s*([0-9.:]{1,2})\s*\/\s*([0-9A-Z][0-9A-Z_:.\- ]*)$/.exec(t);
+  if (!m) return { text: t, ok: false };
+  let id = m[3].replace(/\s+/g, '').replace(/[^0-9A-Z]+$/, ''), fixed = false;
+  const d = /^(\d{4})[-:.]?(\d\d)[-:.]?(\d\d)[_:.-]?(\d+)$/.exec(id); if (d) { const nid = `${d[1]}-${d[2]}-${d[3]}_${d[4]}`; fixed = nid !== id; id = nid; }
+  let mon = m[1].replace(/[^A-Z]/g, ''), yy = m[2];
+  if (!MONTHS.includes(mon)) {
+    // a dated run id carries the month itself; otherwise the closest month name (one letter may be wrong or missing)
+    const near = MONTHS.filter(x => lev1(x, mon));
+    if (d && +d[2] >= 1 && +d[2] <= 12) mon = MONTHS[+d[2] - 1]; else if (near.length === 1) mon = near[0];
+    fixed = true;
+  }
+  if (!/^\d\d$/.test(yy)) { if (d) yy = d[1].slice(2); fixed = true; }
+  const month = `${mon}-${yy}`;
+  const ok = MONTHS.includes(mon) && /^\d\d$/.test(yy) && (/^\d{4}-\d\d-\d\d_\d+$/.test(id) || /^\d{1,5}[A-Z]?$/.test(id)) && (!d || (MONTHS.indexOf(mon) + 1 === +d[2] && d[1].slice(2) === yy));
+  return { text: `${month}/${id}`, month, id, ok, fixed };
+}
+// true when a and b differ by at most one letter (changed, missing or extra)
+function lev1(a, b) {
+  if (a === b) return true; if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, e = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; continue; } if (++e > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } }
+  return e + (a.length - i) + (b.length - j) <= 1;
+}
+function fixText(type, s) {
+  s = nz(s);
+  if (type === 'num') s = s.replace(/\.{2,}/g, '.').replace(/^\./, '').replace(/\.$/, '');
+  if (type === 'date') s = s.replace(/\/{2,}/g, '/');
+  if (type === 'status') s = s.replace(/^(SR|TR)(?=IMR)/, '$1 ');
+  return s;
+}
+function check(r, f) {
+  r.doubt = 0;
+  for (const [k, c] of Object.entries(r.cells)) { c.bad = !!(f[k] && !f[k](c.text)); c.doubt = c.bad || c.worst > DOUBT; if (c.doubt) r.doubt++; }
+}
+
+// ---------- records ----------
+// shot tables + admin choices → records for the server; values the admin corrected are in cell.text already
+function imrRecords(shots, section, line) {
+  const recs = [], seen = new Set();
+  for (const sh of shots) for (const t of sh.tables) if (t.kind === 'imr') for (const r of t.rows) {
+    const c = r.cells; const rec = { section, line, km: +c.km.text, m: +c.m.text, rail: c.rail.text, status: c.status.text, tested: isoOf(c.tested.text), removed: isoOf(c.removed.text) };
+    if (!rec.tested || !isInt(c.km.text)) continue;
+    rec.days = rec.tested && rec.removed ? Math.round((Date.parse(rec.removed) - Date.parse(rec.tested)) / 864e5) : null;
+    rec.key = ['IMR', rec.section, rec.line, rec.km, rec.m, rec.rail, rec.tested].join('|');
+    if (!seen.has(rec.key)) { seen.add(rec.key); recs.push(rec); }
+  }
+  return recs;
+}
+function omsRecords(shots, section, line) {
+  const recs = [], seen = new Map(), runs = [];
+  for (const sh of shots) for (const t of sh.tables) if (t.kind === 'oms') {
+    t.runs.forEach(ru => { if (!runs.some(x => x.id === ru.id && x.month === ru.month)) runs.push({ month: ru.month, id: ru.id }); });
+    for (const r of t.rows) {
+      const km = +r.cells.km.text; if (!isInt(r.cells.km.text)) continue;
+      t.runs.forEach((ru, i) => { const v = +r.cells['v' + i].text || 0, l = +r.cells['l' + i].text || 0; if (!v && !l) return;
+        const k = [km, ru.id || ru.month].join('|'); if (seen.has(k)) return;
+        const rec = { section, line, km, run: ru.id || ru.month, runMonth: ru.month, runIdx: ru.idx, vertical: v, lateral: l }; seen.set(k, rec); recs.push(rec); });
+    }
+  }
+  return { records: recs, runs };
+}
+
+// ---------- learning from corrections ----------
+// text = the value the admin confirmed for this cell; adds glyph variants so the same misread does not happen again
+function learn(T, G, line, text) {
+  const [top, bot, x0, x1, bg] = line; const al = alignLine(T, G, top, bot, x0, x1, bg, text, 0.12); if (!al || al.cost > 0.06) return [];
+  const added = [];
+  for (const [ch, a, b] of al.segs) { const q = glyph(G, top, a, b, bg, al.scale); if (T.add(ch, q, b - a)) added.push({ ch, w: b - a, q: Array.from(q) }); }
+  return added;
+}
+
+
+return { DOUBT, imageFromRGBA, readShot, parseRun, imrRecords, omsRecords, learn, grey, ShotTemplates };
+})();
 __m['core.js'] = (function(){
 // Public surface of the engine (used by UI and by workers).
 const {makeEngine, ingest, readTRCPage, emptyStore} = __m['pipeline.js'];
@@ -2064,8 +2498,10 @@ const {pdfLines, pdfPages} = __m['pdftext.js'];
 const {isRegister, parseRegister} = __m['registers.js'];
 const {classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest} = __m['tmsreports.js'];
 const {sigDistance} = __m['header.js'];
+const {decodePNG} = __m['png.js'];
+const {readShot, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG };
 
 return { CORE };
 })();
