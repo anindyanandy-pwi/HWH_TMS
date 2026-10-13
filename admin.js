@@ -71,14 +71,14 @@ const errPage = (f, e) => ({ file: f.name, blocks: [], dist: {}, peaks: {}, uml:
 // ---------- upload view ----------
 const U = { files: [], log: [], running: false, dfwrDivision: true };
 const GEO_NAME = { curve: 'Curve register', pxing: 'P&C register', lc: 'LC register', sej: 'SEJ register', glued: 'Glued joint register', diamond: 'Diamond crossing register', bridge: 'Bridge register' };
-const KIND_NAME = { omsPeak: 'OMS peak locations above 0.15 g (km/m)', 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages' };
+const KIND_NAME = { omsPeak: 'OMS peak locations above 0.15 g (km/m)', 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages', usfd: 'USFD rail / weld defects', atWelds: 'AT welds done / defective', usfdHist: 'USFD testing history', weldMonths: 'AT welds done / tested per month (K12)', untested: 'New AT welds not yet tested' };
 V.upload = async el => {
   el.innerHTML = T.pageHead('Upload TMS data', 'Admin – every upload is added to the history; nothing older is overwritten') + `<div class="grid2">
     <div><div id="drop" class="drop" tabindex="0"><svg class="dropsvg" viewBox="0 0 48 48"><path d="M6 14h14l4 4h18v22H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M24 36V24m-5 5l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       <div class="droptitle">Click <b>Select files</b> and pick the reports</div><div class="dropsub">TMS PDFs, XLS / XLSX reports, TRC km-wise PNG pages, or a ZIP of them. In the file window you can select many files at once (Ctrl+A or Ctrl+click).</div>
       <div class="btnrow"><button id="pkFiles" class="btn primary">Select files</button><button id="pkFolder" class="btn secondary">Select a whole folder</button></div>
       <div class="dropsub small" style="margin-top:10px">Dragging files onto this box also works in Chrome and Edge. If a dragged file opens in a new tab instead, use the buttons.</div>
-      <input id="inFolder" type="file" webkitdirectory multiple hidden><input id="inFiles" type="file" multiple hidden accept=".png,.jpg,.jpeg,.xls,.xlsx,.pdf,.zip"></div>
+      <input id="inFolder" type="file" webkitdirectory multiple hidden><input id="inFiles" type="file" multiple hidden accept=".png,.jpg,.jpeg,.xls,.xlsx,.pdf,.zip,.json"></div>
 
       <div class="panel" style="margin-top:16px"><div class="panelhead"><span>Screenshots of TMS pages</span><span class="muted">IMR testing history, OMS peaks km-wise comparative summary</span></div>
       <div style="padding:12px"><div id="shotPaste" class="pastebox" tabindex="0">Open the TMS page at normal zoom (100%) → press <b>Windows key + Shift + S</b> and drag over the table (include the column headings) → click here → press <b>Ctrl+V</b>.<br><span class="small">Scroll and repeat until every row is captured; rows seen twice are counted once. Saved screenshots (many at once): <button id="pkShots" class="btn ghost sm">Select screenshot files</button> <button id="pkShotDir" class="btn ghost sm">Select a folder of screenshots</button></span></div>
@@ -95,11 +95,12 @@ function drawQueue() {
   const q = $('queue'); if (!q) return;
   const png = U.files.filter(f => /\.png$/i.test(f.name)).length, docs = U.files.filter(f => !/\.png$/i.test(f.name));
   const sh = SH.list.filter(x => x.status === 'done'), un = sh.filter(x => !x.checked).length;
-  if (!U.files.length && !sh.length) { q.innerHTML = '<div class="muted">Nothing selected yet.</div>'; return; }
+  const web = W.sets.length + W.pages.length + W.usfd.length;
+  if (!U.files.length && !sh.length && !web) { q.innerHTML = '<div class="muted">Nothing selected yet.</div>'; return; }
   const bad = docs.filter(f => f.__info && !f.__info.ok).length;
   // every report file is opened on this computer as soon as it is picked, so it is clear what will be taken from it before anything is uploaded
   q.innerHTML = `<div>${docs.length} report file(s), ${png} TRC page(s)${sh.length ? `, ${sh.length} screenshot(s)${un ? ` – <span class="od">${un} not checked yet</span>` : ' – checked'}` : ''}${bad ? ` · <span class="od">${bad} file(s) not recognised – they will be skipped</span>` : ''}</div>
-    ${docs.length ? `<table class="t fileq"><tbody>${docs.map(f => `<tr class="${f.__info && !f.__info.ok ? 'dbt' : ''}"><td class="small wrap">${esc(f.name)}</td><td class="small wrap">${f.__info ? f.__info.lines.map(l => esc(l)).join('<br>') : '<span class="muted">opening…</span>'}</td></tr>`).join('')}</tbody></table>` : ''}`;
+    ${web ? webQueueHtml() : ''}${docs.length ? `<table class="t fileq"><tbody>${docs.map(f => `<tr class="${f.__info && !f.__info.ok ? 'dbt' : ''}"><td class="small wrap">${esc(f.name)}</td><td class="small wrap">${f.__info ? f.__info.lines.map(l => esc(l)).join('<br>') : '<span class="muted">opening…</span>'}</td></tr>`).join('')}</tbody></table>` : ''}`;
 }
 // what the upload will take from one report file (read here, nothing is sent)
 async function inspectFile(f) {
@@ -141,7 +142,15 @@ async function fromZip(f) {
     if (!out.length) toast(f.name + ': no reports inside the ZIP', true); return out;
   } catch (e) { toast(f.name + ': could not open the ZIP – ' + (e.message || e), true); return []; }
 }
-async function addFilesZ(list) { const flat = []; for (const f of list) { if (/\.zip$/i.test(f.name)) flat.push(...await fromZip(f)); else flat.push(f); } addFiles(flat); }
+async function addFilesZ(list) {
+  const flat = [];
+  for (const f of list) {
+    if (/\.zip$/i.test(f.name)) flat.push(...await fromZip(f));
+    else if (/\.json$/i.test(f.name)) { try { const b = JSON.parse(await f.text()); if (b && b.format === 'tmsc-bundle' && Array.isArray(b.items)) { const items = b.items.map(it => { if (it.b64) { const bin = atob(it.b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return Object.assign({}, it, { b64: undefined, bytes: u.buffer }); } return it; }); await addCollected(items); toast(`${f.name}: ${items.length} page(s) from the TMS Collector added`); } else toast(f.name + ': not a TMS Collector file', true); } catch (e) { toast(f.name + ': could not read – ' + e.message, true); } }
+    else flat.push(f);
+  }
+  addFiles(flat);
+}
 function addFiles(list) {
   const have = new Set(U.files.map(f => f.name + '|' + f.size)); const jpg = [];
   for (const f of list) { if (/\.jpe?g$/i.test(f.name)) { jpg.push(f); continue; } if (/\.(png|xls|xlsx|pdf)$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name + '|' + f.size)) U.files.push(f); }
@@ -213,7 +222,7 @@ async function runUpload() {
   if (SH.list.some(x => x.status === 'reading')) { toast('Screenshots are still being read – wait a moment', true); return; }
   const unchecked = shots.filter(x => !x.checked || !x.section || !x.line);
   if (unchecked.length) { toast(`${unchecked.length} screenshot(s) not checked yet. Click "Check" on each (or remove it with ✕), then upload.`, true); $('shotList').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-  if (!U.files.length && !shots.length) { toast('Select files first', true); return; }
+  if (!U.files.length && !shots.length && !W.sets.length && !W.pages.length && !W.usfd.length) { toast('Select files first', true); return; }
   U.running = true; $('btnGo').disabled = true; U.log = []; const t0 = Date.now();
   try {
     const pngs = U.files.filter(f => /\.png$/i.test(f.name)); const docs = U.files.filter(f => !/\.png$/i.test(f.name));
@@ -231,7 +240,7 @@ async function runUpload() {
           for (const sh of wb.sheets) {
             const k = C.classifyKpiSheet(sh.rows, sh.name); if (!k) continue; used = true;
             if (k === 'jurisdiction') { out.jurisdiction = sh.rows; plog(`  ${f.name}: jurisdiction details`); continue; }
-            if (k === 'weldReg') { const w = C.parseKpiSheet(k, sh.rows, sh.name); const d = C.weldDigest(w.records); kpiSets.push({ kind: 'jog', records: d.pending, scope: w.scope, file: f.name }); kpiSets.push({ kind: 'weldSum', records: d.totals, scope: w.scope, file: f.name }); plog(`  ${f.name}: weld register – ${w.records.length} welds, ${d.needing} need joggled plates, ${d.pending.length} not joggled`); used = false; continue; }
+            if (k === 'weldReg') { const w = C.parseKpiSheet(k, sh.rows, sh.name); const d = C.weldDigest(w.records); kpiSets.push({ kind: 'jog', records: d.pending, scope: w.scope, file: f.name }); kpiSets.push({ kind: 'weldSum', records: d.totals, scope: w.scope, file: f.name }); kpiSets.push({ kind: 'weldMonths', records: d.months, scope: w.scope, file: f.name }); kpiSets.push({ kind: 'untested', records: d.untested, scope: w.scope, file: f.name }); plog(`  ${f.name}: weld register – ${w.records.length} welds, ${d.needing} need joggled plates, ${d.pending.length} not joggled`); used = false; continue; }
             if (k === 'fpReg') { const r = C.parseKpiSheet(k, sh.rows, sh.name); r.file = f.name; kpiSets.push(r); plog(`  ${f.name}: FP joint register – main-line joints counted for K15`); used = false; continue; }
             const r = C.parseKpiSheet(k, sh.rows, sh.name); r.file = f.name; kpiSets.push(r); plog(`  ${f.name}${wb.sheets.length > 1 ? ' [' + sh.name + ']' : ''}: ${KIND_NAME[k]} – ${r.records.length} rows`);
           }
@@ -240,6 +249,8 @@ async function runUpload() {
       if (!used) trcFiles.push({ name: f.name, size: f.size, buf });
     }
     for (const p of shotSets()) { if (p.records.length) kpiSets.push(p); else plog(`${KIND_NAME[p.kind]} (${p.scope.section} ${p.scope.line}): no rows with values`); }
+    if (W.sets.length || W.usfd.length) { plog(`From the TMS Collector: ${W.sets.length} report(s)${W.usfd.length ? `, USFD defects of ${W.usfdLines.length} section-line(s)` : ''}${W.pages.length ? `, ${W.pages.length} TRC km page(s)` : ''}`); kpiSets.push(...W.sets.filter(x => x.records.length || x.kind === 'omsPeak')); }
+    if (W.usfd.length) { kpiSets.push({ kind: 'usfd', records: W.usfd, scope: { lines: W.usfdLines }, file: 'USFD defects (TMS Collector)' }); const pend = C.pendingIMR(W.usfd); if (pend.length) kpiSets.push({ kind: 'imr', records: pend, scope: {}, file: 'IMRs still in track (TMS Collector)' }); }
     if (out.jurisdiction) { plog('Uploading jurisdiction…'); await call('ingest', { kind: 'jurisdiction', rows: out.jurisdiction, file: 'Jurisdiction Details' }); }
     if (out.inspections.length) { const seen = new Set(); const recs = out.inspections.filter(r => !seen.has(r.key) && seen.add(r.key)).map(r => Object.assign({}, r, { defects: undefined })); plog(`Uploading ${recs.length} inspections…`); const r = await send('inspections', { records: recs, file: 'Inspection registers' }, 400); plog(`  ${r.inserted} new inspection(s) added to the history`); }
     for (const s of kpiSets) {
@@ -259,16 +270,17 @@ async function runUpload() {
       for (let i = 0; i < parts.length; i++) { await callR('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') }, { timeout: 330000 }); if (parts.length > 1) plog(`  ${GEO_NAME[k]}: part ${i + 1} of ${parts.length} stored`); }
       plog(`${GEO_NAME[k]}: ${g.recs.length} rows stored for worksite tagging (${secs.length} section(s))`);
     }
-    if (pngs.length) await runTRC(pngs, trcFiles);
+    if (pngs.length || W.pages.length) await runTRC(pngs, trcFiles, W.pages);
     plog('Recalculating KPIs and jobs…'); const rr = await call('refresh'); plog('Done: ' + Object.entries(rr).filter(([k]) => /^K|tracker/.test(k)).map(([k, v]) => `${k} ${typeof v === 'object' ? `+${v.inserted}/~${v.updated}/-${v.closed}` : v}`).join(' · '));
-    plog(`Finished in ${Math.round((Date.now() - t0) / 1000)} s.`); toast('Upload complete'); U.files = []; SH.list.filter(x => x.checked).forEach(x => URL.revokeObjectURL(x.url)); SH.list = SH.list.filter(x => !x.checked && x.status !== 'done'); drawShots(); drawQueue(); await T.reload();
-  } catch (e) { plog('ERROR: ' + (e.error || e.message || e)); fail(e); }
+    plog(`Finished in ${Math.round((Date.now() - t0) / 1000)} s.`); toast('Upload complete'); collectDone(true); U.files = []; SH.list.filter(x => x.checked).forEach(x => URL.revokeObjectURL(x.url)); SH.list = SH.list.filter(x => !x.checked && x.status !== 'done'); drawShots(); drawQueue(); await T.reload();
+  } catch (e) { plog('ERROR: ' + (e.error || e.message || e)); collectDone(false); fail(e); }
   U.running = false; const b = $('btnGo'); if (b) b.disabled = false;
 }
-async function runTRC(pngs, trcFiles) {
-  plog(`Reading ${pngs.length} TRC page(s)… (pages read before are remembered)`);
+async function runTRC(pngs, trcFiles, webPages = []) {
+  if (pngs.length) plog(`Reading ${pngs.length} TRC page(s)… (pages read before are remembered)`);
   const store = await C.ingest(engine, trcFiles, () => {});
-  const pages = await readPages(pngs, (d, n) => { if (d % 25 === 0 || d === n) plog(`  TRC pages ${d} / ${n}`); });
+  const pages = pngs.length ? await readPages(pngs, (d, n) => { if (d % 25 === 0 || d === n) plog(`  TRC pages ${d} / ${n}`); }) : [];
+  if (webPages.length) { plog(`  ${webPages.length} TRC km page(s) read from TMS as text (no screenshots)`); pages.push(...webPages); }
   for (const p of pages) store.pages.push(p);
   const notTrc = pages.filter(p => (p.problems || []).some(x => /Not a TMS km-wise result page/.test(x)));
   if (notTrc.length) { plog(`  ${notTrc.length} picture(s) are not TRC km-wise pages – moved to "Screenshots of TMS pages". Check them there and click Upload again.`); const names = new Set(notTrc.map(p => p.file)); addShots(pngs.filter(f => names.has(f.name))); }
@@ -533,6 +545,59 @@ function wireShots() {
   $('inShots').onchange = pick; $('inShotDir').onchange = pick;
   drawShots();
 }
+
+// ---------- TMS Collector (Chrome extension): reports fetched from TMS arrive here as files and page data ----------
+const W = { sets: [], pages: [], usfd: [], usfdLines: [], notes: [], runId: null, auto: false };
+const stripScripts = h => String(h || '').replace(/<script\b[\s\S]*?<\/script>/gi, '').replace(/<style\b[\s\S]*?<\/style>/gi, '');
+function webQueueHtml() {
+  const rows = [];
+  for (const x of W.sets) rows.push([x.file || KIND_NAME[x.kind], `${KIND_NAME[x.kind] || x.kind} – ${x.records.length} rows`]);
+  if (W.usfd.length) rows.push(['USFD defects', `${W.usfd.length} rail / weld defect(s) on ${W.usfdLines.length} section-line(s); ${C.pendingIMR(W.usfd).length} IMR(s) still in track`]);
+  if (W.pages.length) { const by = {}; for (const p of W.pages) { const k = `${p.section} ${p.lineName || p.line} – run ${p.date}`; by[k] = (by[k] || 0) + 1; } for (const [k, n] of Object.entries(by)) rows.push([k, `TRC km-wise result – ${n} km page(s), read as text`]); }
+  for (const n of W.notes) rows.push(['Note', n]);
+  return `<div class="small" style="margin-top:6px"><b>From the TMS Collector</b></div><table class="t fileq"><tbody>${rows.map(r => `<tr><td class="small wrap">${esc(r[0])}</td><td class="small wrap">${esc(r[1])}</td></tr>`).join('')}</tbody></table>`;
+}
+// items: [{type:'file', name, bytes} | {type:'trc', name, tables} | {type:'paste', name, html} | {type:'usfd', name, html} | {type:'usfdHist', name, html, meta} | {type:'atWelds', name, html, period} | {type:'official', name, html}]
+async function addCollected(items) {
+  const files = []; const hist = [];
+  for (const it of items) {
+    try {
+      if (it.type === 'file') { files.push(new File([it.bytes], it.name)); continue; }
+      if (it.type === 'trc') { const p = C.trcPageFromTables(it.tables, it.name); if (p.blocks.length || Object.keys(p.peaks).length) W.pages.push(p); else W.notes.push(`${it.name}: not a TRC result page – skipped`); continue; }
+      if (it.type === 'paste') { const tp = C.tablesFromPaste(stripScripts(it.html), ''); const k = C.classifyPaste(tp.title); const r = k ? C.parsePaste(k, tp) : null; if (r) { r.file = it.name; W.sets.push(r); } else W.notes.push(`${it.name}: page not recognised – skipped`); continue; }
+      if (it.type === 'usfd') { const r = C.usfdDefectsFromPage(it.html); if (r.section && r.line) { W.usfd.push(...r.records); W.usfdLines.push(r.section + '|' + r.line); } else W.notes.push(`${it.name}: section / line not found – skipped`); continue; }
+      if (it.type === 'usfdHist') { hist.push(...C.usfdHistFromPage(it.html, it.meta || {})); continue; }
+      if (it.type === 'atWelds') { const recs = C.atWeldsFromPage(it.html, it.period); if (recs.length) W.sets.push({ kind: 'atWelds', records: recs, scope: { division: true }, asOn: S.B.today, file: it.name }); continue; }
+      if (it.type === 'official') { const r = C.parseKpiSheet('official', C.rowsFromPage(it.html), ''); if (r && r.records.length && r.records[0].unit) { r.file = it.name; W.sets.push(r); } else W.notes.push(`${it.name}: score page not recognised`); continue; }
+    } catch (e) { W.notes.push(`${it.name || it.type}: could not read – ${e.message || e}`); }
+  }
+  if (hist.length) { const seen = new Set(); W.sets.push({ kind: 'usfdHist', records: hist.filter(r => !seen.has(r.key) && seen.add(r.key)), scope: {}, file: 'USFD testing history (TMS Collector)' }); }
+  if (files.length) await addFilesZ(files);
+  drawQueue();
+}
+function collectDone(ok) {
+  if (!W.runId) return;
+  window.postMessage({ __tmsc: 'result', runId: W.runId, ok, log: U.log.slice(-40) }, location.origin);
+  W.runId = null; W.sets = []; W.pages = []; W.usfd = []; W.usfdLines = []; W.notes = [];
+}
+async function startCollected(m) {
+  if (U.running) { window.postMessage({ __tmsc: 'result', runId: m.runId, ok: false, log: ['An upload is already running on this page – try again when it finishes.'] }, location.origin); return; }
+  W.runId = m.runId; W.auto = !!m.auto;
+  if (S.view !== 'upload') { S.view = 'upload'; T.render(); await new Promise(r => setTimeout(r, 300)); }
+  plog(`TMS Collector: ${m.items.length} item(s) received (run ${m.runId})`);
+  await addCollected(m.items);
+  // wait until every report file has been opened and checked on this computer
+  for (let i = 0; i < 600 && U.files.some(f => !/\.png$/i.test(f.name) && !f.__info); i++) await new Promise(r => setTimeout(r, 500));
+  const bad = U.files.filter(f => f.__info && !f.__info.ok).length;
+  if (W.auto && !bad && !SH.list.length) { plog('Everything recognised – uploading.'); runUpload(); }
+  else { const why = bad ? `${bad} file(s) not recognised` : SH.list.length ? 'screenshots in the list need checking' : 'automatic upload is off'; plog(`Check the list and click "Upload and recalculate" (${why}).`); toast('Collected reports are ready to upload – check the list', !!bad); window.postMessage({ __tmsc: 'waiting', runId: m.runId, why }, location.origin); }
+}
+window.addEventListener('message', e => {
+  if (e.source !== window || !e.data || typeof e.data !== 'object') return;
+  if (e.data.__tmsc === 'ping') window.postMessage({ __tmsc: 'ready', role: 'admin' }, location.origin);
+  if (e.data.__tmsc === 'collect' && Array.isArray(e.data.items)) startCollected(e.data);
+});
+window.postMessage({ __tmsc: 'ready', role: 'admin' }, location.origin);
 
 // ---------- users ----------
 V.users = async el => {

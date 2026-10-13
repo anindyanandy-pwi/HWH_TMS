@@ -2126,7 +2126,13 @@ function weldDigest(recs) {
   const pending = recs.filter(r => needs(r) && !r.joggled).map(r => ({ section: r.section, line: r.line, rail: r.rail, km: r.km, m: r.m, date: r.date, type: r.type, usfd: r.usfd, key: ['JOG', r.section, r.line, r.rail, r.km, r.m, r.date].join('|') }));
   const tot = {}; for (const r of recs) if (r.at) { const k = [r.section, r.line, r.km].join('|'); tot[k] = (tot[k] || 0) + 1; }
   const totals = Object.entries(tot).map(([k, n]) => { const [section, line, km] = k.split('|'); return { section, line, km: +km, count: n }; });
-  return { pending, totals, needing: recs.filter(needs).length };
+  // K12: AT welds done and tested per month (last two years) – the denominator of "% welds defective in initial testing"
+  const mon = {}; const from = new Date(Date.now() - 730 * 864e5).toISOString().slice(0, 7);
+  for (const r of recs) { if (!r.at || !r.date || r.date.slice(0, 7) < from) continue; const k = [r.section, r.line, r.km, r.date.slice(0, 7)].join('|'); const o = mon[k] = mon[k] || { done: 0, tested: 0 }; o.done++; if (r.usfdWeld && r.usfdWeld >= r.date) o.tested++; }
+  const months = Object.entries(mon).map(([k, v]) => { const [section, line, km, month] = k.split('|'); return { section, line, km: +km, month, done: v.done, tested: v.tested }; });
+  // new AT welds not yet given their first USFD test (K12 reminder jobs)
+  const untested = recs.filter(r => r.at && r.date && r.date.slice(0, 7) >= from && (!r.usfdWeld || r.usfdWeld < r.date)).map(r => ({ section: r.section, line: r.line, rail: r.rail, km: r.km, m: r.m, date: r.date, type: r.type, key: ['UT', r.section, r.line, r.rail, r.km, r.m, r.date].join('|') }));
+  return { pending, totals, months, untested, needing: recs.filter(needs).length };
 }
 // FP joint register -> main-line (block section) joints per section/line/km, for the K15 denominator
 function fpReg(rows) {
@@ -2142,7 +2148,8 @@ function fpReg(rows) {
 function tablesFromPaste(html, text) {
   const out = [];
   if (html && /<table/i.test(html) && typeof DOMParser !== 'undefined') {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // a space before every tag keeps cell texts apart in the page text (SECTION : x LINE : y …); cell values are trimmed anyway
+    const doc = new DOMParser().parseFromString(String(html).replace(/</g, ' <'), 'text/html');
     for (const tb of doc.querySelectorAll('table')) {
       const rows = [];
       for (const tr of tb.querySelectorAll('tr')) { const r = []; for (const c of tr.children) { const v = S(c.textContent); const span = +c.getAttribute('colspan') || 1; r.push(v); for (let i = 1; i < span; i++) r.push(''); } if (r.some(Boolean)) rows.push(r); }
@@ -2186,7 +2193,7 @@ function parsePaste(kind, { tables, title }) {
         if (N(r[0]) == null || N(r[1]) == null) continue;
         const rec = { section: sectionName(section || ''), line, km: N(r[1]), m: N(r[2]), rail: S(r.find(c => /^(LR|RR)$/.test(S(c))) || ''), status: S(r[iStat]), tested: iso(r[iTest]), removed: iso(r[iRem]) };
         rec.days = rec.tested && rec.removed ? Math.round((Date.parse(rec.removed) - Date.parse(rec.tested)) / 864e5) : null;
-        rec.key = ['IMR', rec.section, rec.line, rec.km, rec.m, rec.rail, rec.tested].join('|');
+        rec.key = ['IMR', rec.section, lineKey(rec.line), rec.km, rec.m, rec.rail, rec.tested].join('|');   // same key as IMRs seen in the USFD defect lists
         if (!recs.some(x => x.key === rec.key)) recs.push(rec);
       }
     }
@@ -2196,6 +2203,156 @@ function parsePaste(kind, { tables, title }) {
 }
 
 return { isMainOG, classifyKpiSheet, parseKpiSheet, weldDigest, tablesFromPaste, classifyPaste, parsePaste, isoDate: iso };
+})();
+__m['tmstable.js'] = (function(){
+// Small HTML table reader that needs no browser DOM (used by the uploader and by the TMS Collector).
+const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const decode = s => String(s || '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => e[0] === '#' ? String.fromCharCode(e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : +e.slice(1)) : (ENT[e.toLowerCase()] ?? m));
+const clean = s => decode(String(s || '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, '')).replace(/[\s ]+/g, ' ').trim();
+const strip = html => String(html || '').replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style|select|textarea)\b[\s\S]*?<\/\1>/gi, '');
+
+// Leaf tables (tables that contain no other table) in document order; each = rows of cell texts.
+// A cell spanning n columns is followed by n-1 empty cells so columns stay aligned.
+function htmlTables(html) {
+  const s = strip(html); const out = []; const stack = []; const re = /<(\/?)(table|tr|td|th)\b([^>]*)>/gi; let m, cell = null, last = 0;
+  while ((m = re.exec(s))) {
+    const close = m[1] === '/', tag = m[2].toLowerCase();
+    if (cell && (tag === 'td' || tag === 'th' || tag === 'tr' || tag === 'table')) { cell.t += s.slice(last, m.index); const T = stack[stack.length - 1]; if (T && T.rows.length) { const r = T.rows[T.rows.length - 1]; r.push(clean(cell.t)); for (let i = 1; i < cell.span; i++) r.push(''); } cell = null; }
+    if (tag === 'table') { if (!close) { if (stack.length) stack[stack.length - 1].hasChild = true; stack.push({ rows: [], hasChild: false }); } else { const T = stack.pop(); if (T && !T.hasChild) out.push(T.rows.filter(r => r.some(c => c !== ''))); } }
+    else if (tag === 'tr' && !close && stack.length) stack[stack.length - 1].rows.push([]);
+    else if ((tag === 'td' || tag === 'th') && !close && stack.length) { const T = stack[stack.length - 1]; if (!T.rows.length) T.rows.push([]); const sp = /colspan\s*=\s*["']?(\d+)/i.exec(m[3]); cell = { t: '', span: sp ? Math.min(+sp[1], 60) : 1 }; }
+    last = re.lastIndex;
+  }
+  return out.filter(t => t.length);
+}
+// Visible text of a page (titles carry section, line, period …)
+function htmlText(html) { return clean(strip(html).replace(/<\/(p|div|tr|h\d|table|li)>/gi, ' \n ')); }
+function htmlTitle(html) { const m = /<title>([\s\S]*?)<\/title>/i.exec(html || ''); return m ? clean(m[1]) : ''; }
+
+
+return { decode, htmlTables, htmlText, htmlTitle };
+})();
+__m['tmshtml.js'] = (function(){
+// TMS web pages as data (no screenshots): a small HTML table reader that works without a browser DOM,
+// and converters from the TMS Collector's page tables to the records the uploader already understands.
+const {sectionName, lineKey} = __m['names.js'];
+const {PARAMS} = __m['page.js'];
+
+const {decode, htmlTables, htmlText, htmlTitle} = __m['tmstable.js'];
+
+
+// ---------- TRC km-wise result page (TRCNewReportController) -> the same page record the screenshot reader makes ----------
+const isoDMY = s => { const m = /^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/.exec(String(s || '').trim()); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : null; };
+const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const isoDMonY = s => { const m = /^(\d{1,2})-([a-z]{3})-(\d{2,4})/i.exec(String(s || '').trim()); if (!m || !MON[m[2].toLowerCase()]) return null; const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${String(MON[m[2].toLowerCase()]).padStart(2, '0')}-${m[1].padStart(2, '0')}`; };
+function isTrcKmPage(text) { return /TRC TRACK RECORDING RESULT/i.test(text) && /PEAK INFORMATION/i.test(text); }
+function trcPageFromTables(tables, file = 'TRC page') {
+  const out = { file, blocks: [], dist: {}, peaks: {}, uml: [], problems: [], section: null, line: null, date: null, km: null, kmTo: null, speed: null, trc: null, runNo: null, kmTqic: null, source: 'web' };
+  const all = tables.flat();
+  const title = (all.find(r => r.some(c => /TRACK RECORDING RESULT/i.test(c))) || []).join(' ');
+  const sm = /SECTION\s*:\s*(.+?)\s*,\s*LINE\s*:\s*(.+?)\s*$/i.exec(title);
+  if (sm) { out.section = sectionName(sm[1]); out.line = lineKey(sm[2]); out.lineName = sm[2].trim(); }
+  const info = all.find(r => r.some(c => /^RUN NO/i.test(c)));
+  if (info) {
+    const v = lab => { const i = info.findIndex(c => lab.test(c)); return i >= 0 ? String(info[i + 1] || '').trim() : ''; };
+    out.trc = v(/^TRC NO/i); out.runNo = v(/^RUN NO/i).replace(/\s+/g, '');
+    out.date = isoDMY(out.runNo) || isoDMonY(v(/^RUN DATE/i)) || isoDMY(v(/^RUN DATE/i));
+    const k = /(\d+)\s*TO\s*(\d+)/i.exec(v(/^KM\s*:/i)); if (k) { out.km = +k[1]; out.kmTo = +k[2]; }
+    const sp = /^(\d{2,3})$/.exec(v(/^SECTIONAL SPEED/i)); if (sp) out.speed = +sp[1];
+  }
+  let mode = '';
+  for (const t of tables) for (const r of t) {
+    const a = String(r[0] || '').trim(), j = r.join(' ');
+    if (/PEAK DISTRIBUTION/i.test(j)) { mode = 'dist'; continue; }
+    if (/PEAK WORST THAN UML|PEAK WORSE THAN UML/i.test(j)) { mode = 'uml'; continue; }
+    if (/PEAK INFORMATION/i.test(j)) { mode = 'peak'; continue; }
+    const tq = /KM Wise TQIC\s*-?\s*(-?\d+(?:\.\d+)?)/i.exec(j); if (tq) { out.kmTqic = +tq[1]; continue; }
+    if (/^Blk\s*\d/i.test(a)) { const row = r.slice(0, 24); while (row.length < 24) row.push(''); out.blocks.push(row.map(c => String(c).trim())); continue; }
+    if (mode === 'dist' && (a === 'CBML' || a === 'UML')) { const v = r.slice(1, 14).map(c => String(c).trim()); while (v.length < 13) v.push(''); out.dist[a] = v; continue; }
+    if ((mode === 'peak' || mode === 'uml') && PARAMS.includes(a)) { const v = r.slice(1, 21).map(c => String(c).trim()); while (v.length < 20) v.push(''); if (mode === 'peak') out.peaks[a] = v; else if (v.some(Boolean)) out.uml.push([a, ...v]); }
+  }
+  if (!out.section || !out.line) out.problems.push('section/line not found on the page');
+  if (out.km == null) out.problems.push('km');
+  if (!out.date) out.problems.push('date');
+  if (!out.blocks.length && !Object.keys(out.peaks).length) out.problems.push('Not a TMS km-wise result page');
+  return out;
+}
+
+// ---------- USFD defects of one section-line (GangDefectsSecDetails.jsp) ----------
+// Rail defects and weld defects tables -> records {kind:'RAIL'|'WELD', km, m, rail, status, …}
+const N = v => { const s = String(v ?? '').replace(/,/g, '').trim(); if (s === '' || s === '-') return null; const n = Number(s); return isNaN(n) ? null : n; };
+const isoAny = s => isoDMY(s) || isoDMonY(s);
+function usfdDefectsFromPage(html) {
+  const text = htmlText(html); const tables = htmlTables(html);
+  const sec = /Section\s*:\s*(.+?)\s+Line\s*:\s*(.+?)(?:\s+Reporting|\s+Search|\s+Rail Defects|$)/i.exec(text);
+  const section = sec ? sectionName(sec[1]) : null, lineName = sec ? sec[2].trim() : null;
+  const recs = []; let kind = null, H = null;
+  for (const t of tables) for (const r of t) {
+    const j = r.join(' ').trim();
+    if (/^Rail Defects$/i.test(j)) { kind = 'RAIL'; H = null; continue; }
+    if (/^Weld Defects$/i.test(j)) { kind = 'WELD'; H = null; continue; }
+    if (/^Sr\.?\s*No/i.test(r[0])) { H = r.map(c => c.replace(/[↑↓\s]+$/, '').trim().toLowerCase()); continue; }
+    if (!kind || N(r[0]) == null || N(r[1]) == null) continue;
+    const rec = { kind, section, line: lineName, km: N(r[1]), m: N(r[2]), rail: (r.find(c => /^(LR|RR)$/.test(String(c).trim())) || '').trim(), status: (r.find(c => /^(IMR|IMRW|OBS|OBSW|DFWN|DFWO|DFWR|DFW|REM|RE|SPL)\b/i.test(String(c).trim())) || '').trim() };
+    const dates = r.map(isoAny).filter(Boolean);
+    if (kind === 'RAIL') { rec.tested = dates[0] || null; rec.gmt = N(r[r.findIndex(c => isoAny(c)) + 1]); }
+    else { rec.welded = dates[0] || null; rec.detected = dates[1] || null; rec.weldType = (r.find(c => /weld/i.test(c)) || '').trim(); }
+    rec.key = ['USFD', kind, section, lineName, rec.km, rec.m, rec.rail, kind === 'RAIL' ? rec.tested : rec.welded].join('|');
+    recs.push(rec);
+  }
+  return { kind: 'usfd', section, line: lineName, records: recs };
+}
+
+// ---------- AT welds done / defective (ATWeldsDoneDefectiveReport.jsp, division row) ----------
+function atWeldsFromPage(html, period) {
+  const recs = [];
+  for (const t of htmlTables(html)) {
+    const hi = t.findIndex(r => r.some(c => /No\. of AT Welds Done/i.test(c))); if (hi < 0) continue;
+    const H = t[hi].map(c => c.toLowerCase());
+    const col = re => H.findIndex(c => re.test(c));
+    const iDone = col(/welds done/), iTest = col(/welds tested/), iUn = col(/untested/), iDef = col(/defec/i), iPct = col(/%/);
+    for (const r of t.slice(hi + 1)) { if (N(r[iDone]) == null) continue; recs.push({ unit: r[0], done: N(r[iDone]), tested: N(r[iTest]), untested: N(r[iUn]), defective: N(r[iDef]), pct: N(r[iPct]), from: period && period.from, to: period && period.to }); }
+  }
+  return recs;
+}
+
+// ---------- official item-wise score (PopUpPerformanceMatrix_ItemWiseDetails.jsp) as rows for the existing parser ----------
+function rowsFromPage(html) {
+  const tables = htmlTables(html); const text = htmlText(html);
+  // the Excel export starts with two title rows: "Item Wise Score … Jurisdiction of X" and "Processing Date … Reporting Date …"
+  const head = [];
+  const j = /In the Jurisdiction of\s*(\S+)/i.exec(text); const pd = /Processing Date:\s*([\d\/]+)/i.exec(text); const rd = /Reporting Date:\s*([\d\/]+)/i.exec(text);
+  head.push([`Item Wise Score ${j ? 'In the Jurisdiction of ' + j[1] : ''}`]); head.push([`Processing Date: ${pd ? pd[1] : ''} Reporting Date: ${rd ? rd[1] : ''}`]);
+  return head.concat(...tables);
+}
+
+// ---------- USFD testing history of one rail / weld defect (PopUpRailUSFDHistory.jsp / PopUpWeldUSFDHistory.jsp) ----------
+// meta = the defect it belongs to {kind, section, line, km, m, rail, asset}
+function usfdHistFromPage(html, meta = {}) {
+  const out = [];
+  for (const t of htmlTables(html)) {
+    const hi = t.findIndex(r => r.some(c => /^Testing Date$/i.test(String(c).replace(/[↑↓\s]+$/, '').trim())));
+    if (hi < 0) continue;
+    for (const r of t.slice(hi + 1)) {
+      if (N(r[0]) == null) continue; const date = isoAny(r[1]); if (!date) continue;
+      const rec = { asset: meta.asset || '', kind: meta.kind || '', section: meta.section, line: meta.line, km: meta.km, m: meta.m, rail: meta.rail || '', date, testType: r[2] || '', visual: r[3] || '', position: r[4] || '', probe: r[5] || '', echo: N(r[9]) ?? N(r[8]), classOld: r[10] || '', classNew: r[11] || '', joggled: r[12] || '', testedBy: r[13] || '' };
+      rec.key = ['UT', meta.kind || '', meta.section, meta.line, meta.km, meta.m, meta.rail || '', date, rec.testType].join('|');
+      out.push(rec);
+    }
+  }
+  return out;
+}
+// IMRs still in track (rail IMR, weld IMRW) from the defect lists -> IMR records without a removal date (K11 jobs)
+function pendingIMR(defects) {
+  return defects.filter(d => /^IMRW?\b/i.test(d.status || '')).map(d => {
+    const tested = d.kind === 'RAIL' ? d.tested : (d.detected || d.welded);
+    const rec = { section: d.section, line: d.line, km: d.km, m: d.m, rail: d.rail, status: d.status, tested, removed: '', days: null };
+    rec.key = ['IMR', rec.section, lineKey(rec.line), rec.km, rec.m, rec.rail, rec.tested].join('|');
+    return rec;
+  }).filter(r => r.tested);
+}
+
+return { isTrcKmPage, trcPageFromTables, usfdDefectsFromPage, atWeldsFromPage, rowsFromPage, usfdHistFromPage, pendingIMR, decode, htmlTables, htmlText, htmlTitle };
 })();
 __m['shotocr.js'] = (function(){
 // Screenshot reader for TMS web report pages (OMS peaks comparative summary, OMS accn. peaks, IMR testing history …).
@@ -2670,9 +2827,10 @@ const {unzip} = __m['zip.js'];
 const {classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest} = __m['tmsreports.js'];
 const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
+const {htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR} = __m['tmshtml.js'];
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR };
 
 return { CORE };
 })();
