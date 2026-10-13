@@ -697,6 +697,7 @@ async function unzip(arrayBuffer) {
   }
   return {
     names: Object.keys(files),
+    async bytes(name) { const f = files[name]; if (!f) return null; return f.method === 8 ? await pipe(f.data, new DecompressionStream('deflate-raw')) : f.data.slice(); },
     async text(name) { const f = files[name]; if (!f) return null; const raw = f.method === 8 ? await pipe(f.data, new DecompressionStream('deflate-raw')) : f.data; return new TextDecoder().decode(raw); }
   };
 }
@@ -1783,9 +1784,10 @@ const LABELS = ['Route', 'Section', 'Line', 'KM Stretch', 'Train No.', 'Engine N
 const DATE = /(\d\d)\/(\d\d)\/(\d{4})/;
 const iso = s => { const m = String(s || '').match(DATE); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
 
-function isRegister(pages) { return pages.slice(0, 2).some(pg => pg.slice(0, 3).some(r => r.cells.some(c => TITLE.test(c.txt)))); }
+function isRegister(pages) { return pages.slice(0, 2).some(pg => pg.slice(0, 3).some(r => r.cells.some(c => TITLE.test(c.txt)))) || !!formKind(pages); }
 
 function parseRegister(pages) {
+  if (!pages.slice(0, 2).some(pg => pg.slice(0, 3).some(r => r.cells.some(c => TITLE.test(c.txt))))) { const fk = formKind(pages); if (fk) return parseForms(pages, fk); }
   const out = []; let cur = null, mode = 'head', orphan = null, wantDesig = false;
   const finish = () => { if (cur) { finalize(cur); out.push(cur); } cur = null; };
   for (const pg of pages) for (const row of pg) {
@@ -1845,7 +1847,119 @@ function finalize(r) {
   delete r.f;
 }
 
-return { isRegister, parseRegister };
+// ---------- asset inspection registers (TMS): curve, P&C, diamond, LC, LWR, ballast, rail, sleeper ----------
+// One record per inspection (an asset or stretch, a date, who). Kept as inspection history; readings are not used yet.
+const FORMS = [
+  ['PXING_INT', /PROFORMA FOR INTERMEDIATE INSPECTION OF POINTS/i],
+  ['PXING', /PROFORMA FOR INSPECTION OF POINTS AND CROSSING/i],
+  ['CURVE', /^CURVE INSPECTION REGISTER/i],
+  ['LC', /^LEVEL CROSSINGS? INSPECTION BOOK/i],
+  ['LWR', /^CHART OF MOVEMENT OF LWR/i],
+  ['BALLAST', /^BALLAST INSPECTION REGISTER/i],
+  ['RAIL', /^RAIL INSPECTION REGISTER/i],
+  ['SLEEPER', /^SLEEPER INSPECTION REGISTER/i]
+];
+const FORM_NAME = { CURVE: 'Curve inspection', PXING: 'P&C inspection', DIAMOND: 'Diamond crossing inspection', PXING_INT: 'Intermediate P&C inspection', LC: 'Level crossing inspection', LWR: 'LWR movement chart', BALLAST: 'Ballast inspection', RAIL: 'Rail inspection', SLEEPER: 'Sleeper inspection' };
+const txt = r => r.cells.map(c => c.txt.trim()).filter(Boolean);
+function formKind(pages) {
+  for (const pg of pages.slice(0, 2)) for (const r of pg.slice(0, 4)) for (const c of r.cells) { const t = c.txt.trim(); for (const [k, re] of FORMS) if (re.test(t)) return k; }
+  return null;
+}
+const D = /(\d\d)\/(\d\d)\/(\d{4})/;
+const dmy = s => { const m = String(s || '').match(D); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
+const kmOf = s => { s = String(s || ''); let m = s.match(/(-?\d+)\s*km\s*(\d+)\s*m/i); if (m) return +m[1] + +m[2] / 1000; m = s.match(/(-?\d+(?:\.\d+)?)/); return m ? +m[1] : null; };
+const clean = s => String(s || '').replace(/^[:\-\s]+/, '').replace(/\s+/g, ' ').trim();
+// designation as used elsewhere: SSE/P.WAY/<unit>; a sectional SSE becomes SSE/P.WAY/SEC/<unit> (not the in-charge)
+function normDesig(d) {
+  let x = String(d || '').toUpperCase().replace(/\s+/g, ''); const sec = /\((SECTIONAL|SEC)\)$/.test(x); x = x.replace(/\((SECTIONAL|SEC)\)$/, '');
+  x = x.replace(/^(SSE|JE)\/(P\.?WAY|PW)\//, '$1/P.WAY/'); if (sec && /^SSE\/P\.WAY\/[^/]+$/.test(x)) x = x.replace('SSE/P.WAY/', 'SSE/P.WAY/SEC/');
+  return x;
+}
+const unitOfDesig = d => { const m = normDesig(d).match(/^(?:SSE|JE)\/P\.WAY\/(?:\d+\/|SEC\/)?([A-Z0-9()]+)$/); return m ? m[1] : null; };
+// value of a label: "Label : value" in one cell, or the label cell followed by ": value" / "value"
+function field(rows, re) {
+  for (const r of rows) { const cs = r.cells.filter(c => c.txt.trim()); for (let i = 0; i < cs.length; i++) { const t = cs[i].txt.trim(); const m = t.match(re); if (!m) continue; const rest = clean(t.slice(m[0].length)); if (rest) return rest; if (cs[i + 1]) return clean(cs[i + 1].txt); return ''; } }
+  return '';
+}
+// the cells to the right of a label on its row, split into the two inspection columns at x = mid
+function cols(rows, re, mid) {
+  for (let k = 0; k < rows.length; k++) { const cs = rows[k].cells.filter(c => c.txt.trim()); const i = cs.findIndex(c => re.test(c.txt.trim())); if (i < 0) continue; const o = [[], []]; cs.slice(i + 1).forEach(c => o[c.x < mid ? 0 : 1].push(clean(c.txt))); return { k, v: o.map(a => a.filter(Boolean).join(' ')) }; }
+  return null;
+}
+function rec(type, f) {
+  const desig = normDesig(f.desig);
+  const r = { type, subType: f.subType || '', asset: f.asset || '', route: clean(f.route), line: clean(f.line), kmA: f.kmA ?? null, kmB: f.kmB ?? f.kmA ?? null, date: f.date, dateTo: f.date, entry: f.entry || null, official: clean(f.official), desig, unit: unitOfDesig(desig), defects: [], remarks: [], defectN: 0, remarkN: 0, station: f.station || '' };
+  r.key = [type, r.asset, r.route, r.line, r.date, r.desig, r.kmA, r.kmB].join('|');
+  return r;
+}
+function parseForms(pages, kind) {
+  const all = []; pages.forEach(pg => pg.forEach(r => all.push(r)));
+  const re = FORMS.find(f => f[0] === kind)[1];
+  const starts = []; all.forEach((r, i) => { if (r.cells.some(c => re.test(c.txt.trim()))) starts.push(i); });
+  const out = [];
+  starts.forEach((a, n) => { const rows = all.slice(n === 0 ? Math.max(0, a - 2) : a, starts[n + 1] ?? all.length); try { out.push(...(P[kind] || (() => []))(rows)); } catch (e) { /* one damaged form does not stop the file */ } });
+  const seen = new Set(); return out.filter(r => r.date && !seen.has(r.key) && seen.add(r.key));
+}
+const P = {
+  CURVE(rows) {
+    const route = field(rows, /^Section\/Station\s*:?/i), line = field(rows, /^Line\s*:?/i), no = field(rows, /^Curve No\.?\s*:?/i);
+    const from = kmOf(field(rows, /^From\s*:?/i)), to = kmOf(field(rows, /^To\s*:?/i));
+    const hd = rows.find(r => r.cells.some(c => /Details of Inspection/i.test(c.txt))); if (!hd) return [];
+    const dates = [null, null]; hd.cells.forEach(c => { const d = dmy(c.txt); if (d && /Details of Inspection/i.test(c.txt)) dates[c.x < 300 ? 0 : 1] = d; });
+    const nm = cols(rows, /^Inspecting off?ic?i?al/i, 300), dg = cols(rows, /^Designation/i, 300), en = cols(rows, /^Entry Date/i, 300);
+    return [0, 1].filter(i => dates[i]).map(i => rec('CURVE', { asset: 'Curve ' + no, subType: 'Curve ' + no, route, line, kmA: from, kmB: to, date: dates[i], official: nm && nm.v[i], desig: dg && dg.v[i], entry: en && dmy(en.v[i]) }));
+  },
+  PXING(rows) {
+    if (rows.some(r => r.cells.some(c => /Diamond Crossing|Annexure-2\/6\s*\(D\)/i.test(c.txt)))) return P.DIAMOND(rows);
+    const route = field(rows, /^Section\/Station\s*:?/i), station = field(rows, /^Operating Station\s*:?/i), no = field(rows, /^Point No\.?\s*:?/i), at = kmOf(field(rows, /^Location\s*:?/i));
+    const dr = rows.find(r => r.cells.filter(c => D.test(c.txt) && /^\d\d\/\d\d\/\d{4}$/.test(c.txt.trim())).length && r.cells.some(c => /with Date/i.test(c.txt)));
+    if (!dr) return [];
+    const dates = [null, null]; dr.cells.forEach(c => { if (/^\d\d\/\d\d\/\d{4}$/.test(c.txt.trim())) dates[c.x < 320 ? 0 : 1] = dmy(c.txt); });
+    const by = [null, null]; rows.forEach(r => r.cells.forEach(c => { const m = c.txt.trim().match(/^Done By:\s*(.+)$/i); if (m) by[c.x < 320 ? 0 : 1] = m[1]; }));
+    const nm = cols(rows, /^\d*\.?\s*Inspecting Official/i, 320), dg = cols(rows, /^\d*\.?\s*Designation/i, 320), en = cols(rows, /^\d*\.?\s*Entry Date/i, 320);
+    // names often wrap onto the rows just above and below the label
+    if (nm) [nm.k - 1, nm.k + 1].forEach(k => { const r = rows[k]; if (!r || r.cells.some(c => c.x < 100 && c.txt.trim())) return; r.cells.forEach(c => { const t = clean(c.txt); if (t && /^[A-Za-z .]+$/.test(t)) { const i = c.x < 320 ? 0 : 1; nm.v[i] = k < nm.k ? (t + ' ' + nm.v[i]).trim() : (nm.v[i] + ' ' + t).trim(); } }); });
+    return [0, 1].filter(i => dates[i]).map(i => rec('PXING', { asset: 'Point ' + no, subType: 'Point ' + no + (station ? ' (' + station + ')' : ''), station, route, line: '', kmA: at, date: dates[i], official: nm && nm.v[i], desig: (dg && dg.v[i]) || by[i], entry: en && dmy(en.v[i]) }));
+  },
+  DIAMOND(rows) {
+    const no = field(rows, /^Point No\.?\s*:?/i), station = field(rows, /^Operating Station\s*:?/i);
+    const route = field(rows, /^Section\/Station\s*1?\s*:/i), line = field(rows, /^Line\s*1?\s*:/i), at = kmOf(field(rows, /^Location\s*:\s*(?=\d)/i));
+    const date = dmy(field(rows, /^Inspection Date\s*:?/i)); if (!date) return [];
+    return [rec('DIAMOND', { asset: 'Point ' + no, subType: 'Diamond ' + no + (station ? ' (' + station + ')' : ''), station, route, line, kmA: at, date, official: field(rows, /^Inspecting off?ic?i?al\s*:?/i), desig: field(rows, /^Designation\s*:?/i), entry: dmy(field(rows, /^Entry Date\s*:?/i)) })];
+  },
+  LC(rows) {
+    const route = field(rows, /^Section\s*:/i), no = field(rows, /^Crossing No\.?\s*:/i), gate = field(rows, /^Gate Type\s*:/i), at = kmOf(field(rows, /^Location\s*:/i));
+    const dates = [null, null]; for (const r of rows.slice(0, 14)) { const cs = r.cells.filter(c => /^\d\d\/\d\d\/\d{4}/.test(c.txt.trim())); if (cs.length && r.cells.every(c => !c.txt.trim() || /^\d\d\/\d\d\/\d{4}/.test(c.txt.trim()))) { cs.forEach(c => dates[c.x < 400 ? 0 : 1] = dmy(c.txt)); break; } }
+    const nm = cols(rows, /^Inspection Authority\s*:?/i, 400), dg = cols(rows, /^Designation\s*:?/i, 400), en = cols(rows, /^Entry Date\s*:?/i, 400);
+    return [0, 1].filter(i => dates[i]).map(i => rec('LC', { asset: 'LC ' + no, subType: 'LC ' + no + (gate ? ' (' + gate + ')' : ''), route, line: '', kmA: at, date: dates[i], official: nm && nm.v[i], desig: dg && dg.v[i], entry: en && dmy(en.v[i]) }));
+  },
+  LWR(rows) {
+    const t = rows.map(r => txt(r).join(' ')).join('\n');
+    const no = (t.match(/LWR\/CWR No\.?:\s*([^\s|]+)/i) || [])[1] || ''; const kms = [...t.matchAll(/at km\s*(-?\d+(?:\.\d+)?)/gi)].map(m => +m[1]);
+    const ds = new Set(); rows.forEach(r => { const c = r.cells.find(c => c.txt.trim()); if (c && c.x < 60 && /^\d\d\/\d\d\/\d{4}$/.test(c.txt.trim())) ds.add(dmy(c.txt)); });
+    const official = field(rows, /^Measured by:?/i), desig = field(rows, /^Designation:?/i), entry = dmy(field(rows, /^Entry Date:?/i));
+    return [...ds].map(d => rec('LWR', { asset: 'LWR ' + no, subType: 'LWR ' + no, route: '', line: '', kmA: kms.length ? Math.min(...kms) : null, kmB: kms.length ? Math.max(...kms) : null, date: d, official, desig, entry }));
+  },
+  BALLAST(rows) { return P._stretch('BALLAST', rows); },
+  RAIL(rows) { return P._stretch('RAIL', rows); },
+  _stretch(type, rows) {
+    const date = dmy(field(rows, /^Inspection Date\s*:?/i)); if (!date) return [];
+    return [rec(type, { route: field(rows, /^Section\s*:?/i), line: field(rows, /^Line\s*:?/i), kmA: kmOf(field(rows, /^Location From\s*:/i) || field(rows, /^Location From\s*$/i)), kmB: kmOf(field(rows, /^Location To\s*:/i) || field(rows, /^Location To\s*$/i)), date, desig: field(rows, /^Inspection Authority\s*:?/i) })];
+  },
+  SLEEPER(rows) {
+    const date = dmy(field(rows, /^Inspection Date\s*:?/i)); if (!date) return [];
+    const off = field(rows, /^Inspecting Official\s*:?/i); const m = off.match(/^(.*?)\s+-\s+(\S+.*)$/);
+    const lines = new Set(), kms = [];
+    // columns by position (a blank "to" metre would otherwise shift the counts into the location)
+    rows.forEach(r => { const cs = r.cells.filter(c => c.txt.trim()); if (!cs.length || !/line$/i.test(cs[0].txt.trim())) return; const at = (lo, hi) => { const c = cs.find(c => c.x >= lo && c.x < hi && /^\d+$/.test(c.txt.trim())); return c ? +c.txt.trim() : null; };
+      const k1 = at(80, 130), m1 = at(130, 180), k2 = at(180, 230), m2 = at(230, 280); if (k1 == null) return; lines.add(cs[0].txt.trim()); kms.push(k1 + (m1 || 0) / 1000); if (k2 != null) kms.push(k2 + (m2 || 0) / 1000); });
+    return [rec('SLEEPER', { route: field(rows, /^Section\s*:?/i), line: [...lines].join(', '), kmA: kms.length ? Math.min(...kms) : null, kmB: kms.length ? Math.max(...kms) : null, date, official: m ? m[1] : off, desig: m ? m[2] : '' })];
+  },
+  PXING_INT() { return []; }   // sample seen so far is a blank form; a filled sample is needed to read it
+};
+
+
+return { isRegister, parseRegister, FORM_NAME, normDesig, formKind };
 })();
 __m['tmsreports.js'] = (function(){
 // TMS KPI report parsers (Excel exports and pasted web tables). Each returns {kind, asOn, scope, records}.
@@ -1872,6 +1986,7 @@ const grab = (t, re) => { const m = t.match(re); return m ? S(m[1]) : null; };
 function classifyKpiSheet(rows, name = '') {
   const t = flat(rows).toLowerCase();
   if (/item wise score/.test(t)) return 'official';
+  if (/oms inspection/.test(t) && /peak locations exceeding/.test(t)) return 'omsPeak';
   if (/latest inspection report|last inspection report/.test(t)) return 'assetInsp';
   if (/fracture analysis/.test(t)) return 'fracture';
   if (/location needing attention/.test(t)) return 'lna';
@@ -1884,8 +1999,33 @@ function classifyKpiSheet(rows, name = '') {
 }
 
 function parseKpiSheet(kind, rows, sheetName = '') {
-  const P = { official, assetInsp, fracture, lna, dfwr, og, weldReg, fpReg }[kind];
+  const P = { official, assetInsp, fracture, lna, dfwr, og, weldReg, fpReg, omsPeak }[kind];
   return P ? P(rows, sheetName) : null;
+}
+
+// OMS inspection – peak locations exceeding prescribed limits (km/m), one block per section and line.
+// Snapshot per section: a peak missing from a later file of the same section is closed (the next OMS run cleared it).
+function omsPeak(rows) {
+  const asOn = iso(grab(S((rows[1] || [])[0]) + ' ' + flat(rows), /Reporting Date:\s*([\d\/]+)/));
+  const recs = [], secs = new Set(); let cur = null, H = null;
+  for (const r of rows) {
+    const c0 = S((r || [])[0]);
+    const sm = c0.match(/^Section:\s*(.+?)\s+Line:\s*(\S+(?:\s\d)?)\s+Sectional Speed:\s*(\d+)/i);
+    if (sm) {
+      const raw = sm[1].trim(); const pm = raw.match(/^(.*?)\s*\(([^)]*)\)\s*$/); const nm = pm ? pm[1] : raw, code = pm ? pm[2] : '';
+      let section = sectionName(nm); if (section === nm && code && sectionName(code) !== code) section = sectionName(code);
+      cur = { section, line: sm[2].toUpperCase(), speed: +sm[3] }; secs.add(section); H = null; continue;
+    }
+    if (/^Sr\.?\s*No/i.test(c0)) { const h = r.map(x => S(x).toLowerCase()); const f = re => h.findIndex(x => re.test(x)); H = { sse: f(/^sse/), loc: f(/^location/), v: f(/^vertical/), l: f(/^lateral/), date: f(/^run date/), run: f(/^run no/) }; continue; }
+    if (!cur || !H || N(c0) == null || H.loc < 0) continue;
+    const km = N(r[H.loc]), m = N(r[H.loc + 1]); if (km == null) continue;
+    const v = H.v >= 0 ? N(r[H.v]) : null, l = H.l >= 0 ? N(r[H.l]) : null;
+    const sse = H.sse >= 0 ? S(r[H.sse]) : ''; const run = H.run >= 0 ? S(r[H.run]) : '';
+    const rec = { section: cur.section, line: cur.line, speed: cur.speed, km, m: m == null ? 0 : m, vertical: v, lateral: l, value: Math.max(v || 0, l || 0), dir: (l || 0) > (v || 0) ? 'Lateral' : 'Vertical', date: iso(H.date >= 0 ? r[H.date] : null) || (/^\d{4}-\d\d-\d\d/.test(run) ? run.slice(0, 10) : null), run, sse, unit: unitOf(sse) };
+    rec.key = ['OMSPEAK', rec.section, lineKey(rec.line), rec.km, rec.m, rec.run || rec.date].join('|');
+    recs.push(rec);
+  }
+  return { kind: 'omsPeak', asOn, scope: { sections: [...secs] }, records: recs, lines: rows.filter(r => /^Section:/i.test(S((r || [])[0]))).length };
 }
 
 // Official item-wise score popup (TMS performance matrix)
@@ -2525,13 +2665,14 @@ const {lineDisplay, sectionCode, sectionName, lineKey} = __m['names.js'];
 const {readXLS} = __m['xls.js'];
 const {readXLSX} = __m['xlsx.js'];
 const {pdfLines, pdfPages} = __m['pdftext.js'];
-const {isRegister, parseRegister} = __m['registers.js'];
+const {isRegister, parseRegister, FORM_NAME, formKind} = __m['registers.js'];
+const {unzip} = __m['zip.js'];
 const {classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest} = __m['tmsreports.js'];
 const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck };
 
 return { CORE };
 })();

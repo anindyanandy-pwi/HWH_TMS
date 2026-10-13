@@ -71,14 +71,14 @@ const errPage = (f, e) => ({ file: f.name, blocks: [], dist: {}, peaks: {}, uml:
 // ---------- upload view ----------
 const U = { files: [], log: [], running: false, dfwrDivision: true };
 const GEO_NAME = { curve: 'Curve register', pxing: 'P&C register', lc: 'LC register', sej: 'SEJ register', glued: 'Glued joint register', diamond: 'Diamond crossing register', bridge: 'Bridge register' };
-const KIND_NAME = { 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages' };
+const KIND_NAME = { omsPeak: 'OMS peak locations above 0.15 g (km/m)', 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages' };
 V.upload = async el => {
   el.innerHTML = T.pageHead('Upload TMS data', 'Admin – every upload is added to the history; nothing older is overwritten') + `<div class="grid2">
     <div><div id="drop" class="drop" tabindex="0"><svg class="dropsvg" viewBox="0 0 48 48"><path d="M6 14h14l4 4h18v22H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M24 36V24m-5 5l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-      <div class="droptitle">Click <b>Select files</b> and pick the reports</div><div class="dropsub">TMS PDFs, XLS / XLSX reports, TRC km-wise PNG pages. In the file window you can select many files at once (Ctrl+A or Ctrl+click).</div>
+      <div class="droptitle">Click <b>Select files</b> and pick the reports</div><div class="dropsub">TMS PDFs, XLS / XLSX reports, TRC km-wise PNG pages, or a ZIP of them. In the file window you can select many files at once (Ctrl+A or Ctrl+click).</div>
       <div class="btnrow"><button id="pkFiles" class="btn primary">Select files</button><button id="pkFolder" class="btn secondary">Select a whole folder</button></div>
       <div class="dropsub small" style="margin-top:10px">Dragging files onto this box also works in Chrome and Edge. If a dragged file opens in a new tab instead, use the buttons.</div>
-      <input id="inFolder" type="file" webkitdirectory multiple hidden><input id="inFiles" type="file" multiple hidden accept=".png,.jpg,.jpeg,.xls,.xlsx,.pdf"></div>
+      <input id="inFolder" type="file" webkitdirectory multiple hidden><input id="inFiles" type="file" multiple hidden accept=".png,.jpg,.jpeg,.xls,.xlsx,.pdf,.zip"></div>
 
       <div class="panel" style="margin-top:16px"><div class="panelhead"><span>Screenshots of TMS pages</span><span class="muted">IMR testing history, OMS peaks km-wise comparative summary</span></div>
       <div style="padding:12px"><div id="shotPaste" class="pastebox" tabindex="0">Open the TMS page at normal zoom (100%) → press <b>Windows key + Shift + S</b> and drag over the table (include the column headings) → click here → press <b>Ctrl+V</b>.<br><span class="small">Scroll and repeat until every row is captured; rows seen twice are counted once. Saved screenshots (many at once): <button id="pkShots" class="btn ghost sm">Select screenshot files</button> <button id="pkShotDir" class="btn ghost sm">Select a folder of screenshots</button></span></div>
@@ -108,7 +108,7 @@ async function inspectFile(f) {
     const buf = await f.arrayBuffer();
     if (ext === 'pdf') {
       if (f.size > 15e6) { lines.push('Very large PDF – will be skipped'); }
-      else { const pages = await C.pdfPages(buf); if (C.isRegister(pages)) { const R = C.parseRegister(pages); ok = R.length > 0; lines.push(`Inspection register (${R[0] ? R[0].type : ''}) – ${R.length} inspections`); }
+      else { const pages = await C.pdfPages(buf); if (C.isRegister(pages)) { const R = C.parseRegister(pages); ok = R.length > 0; lines.push(regText(pages, R)); }
         else { const k = C.classifyPdf(await C.pdfLines(buf)); ok = !!k; lines.push(k ? (C.KINDS[k] || k) + ' – used for the TRC analysis' : 'Not a TMS report this program knows'); } }
     } else {
       const wb = ext === 'xls' ? C.readXLS(buf) : await C.readXLSX(buf);
@@ -128,6 +128,20 @@ async function inspectFile(f) {
   } catch (e) { lines.push('Could not open: ' + (e.message || e)); }
   f.__info = { ok, lines }; drawQueue();
 }
+// e.g. "Curve inspection register – 203 inspections"; a blank form says so
+function regText(pages, R) {
+  const fk = C.formKind(pages); const types = [...new Set(R.map(r => r.type))];
+  const nm = types.length ? types.map(t => C.FORM_NAME[t] || { FP: 'Foot plate', RV: 'Rear vehicle', FOOT: 'On foot', TROLLEY: 'Trolley' }[t] || t).join(' + ') : (C.FORM_NAME[fk] || 'Inspection');
+  return R.length ? `${nm} register – ${R.length} inspection(s)` : `${nm} – no filled-in inspections in this file (blank form?) – will be skipped`;
+}
+// a ZIP is opened here and the reports inside are added one by one
+async function fromZip(f) {
+  try { const z = await C.unzip(await f.arrayBuffer()); const out = [];
+    for (const n of z.names) { if (/\/$/.test(n) || /(^|\/)(__MACOSX|~\$)/.test(n) || !/\.(png|jpe?g|xls|xlsx|pdf)$/i.test(n)) continue; const b = await z.bytes(n); out.push(new File([b], n.split('/').pop(), { type: '' })); }
+    if (!out.length) toast(f.name + ': no reports inside the ZIP', true); return out;
+  } catch (e) { toast(f.name + ': could not open the ZIP – ' + (e.message || e), true); return []; }
+}
+async function addFilesZ(list) { const flat = []; for (const f of list) { if (/\.zip$/i.test(f.name)) flat.push(...await fromZip(f)); else flat.push(f); } addFiles(flat); }
 function addFiles(list) {
   const have = new Set(U.files.map(f => f.name + '|' + f.size)); const jpg = [];
   for (const f of list) { if (/\.jpe?g$/i.test(f.name)) { jpg.push(f); continue; } if (/\.(png|xls|xlsx|pdf)$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name + '|' + f.size)) U.files.push(f); }
@@ -138,7 +152,7 @@ function addFiles(list) {
 function wireDrop() {
   $('pkFolder').onclick = e => { e.stopPropagation(); $('inFolder').click(); }; $('pkFiles').onclick = e => { e.stopPropagation(); $('inFiles').click(); };
   $('drop').onclick = e => { if (!e.target.closest('button,input')) $('inFiles').click(); }; $('drop').style.cursor = 'pointer';
-  const picked = e => { const n = U.files.length; addFiles([...e.target.files]); e.target.value = ''; const a = U.files.length - n; toast(a ? `${a} file(s) added. Click "Upload and recalculate".` : 'No new PDF / XLS / XLSX / PNG files in that selection.', !a); };
+  const picked = async e => { const n = U.files.length; const L = [...e.target.files]; e.target.value = ''; await addFilesZ(L); const a = U.files.length - n; toast(a ? `${a} file(s) added. Click "Upload and recalculate".` : 'No new PDF / XLS / XLSX / PNG / ZIP files in that selection.', !a); };
   $('inFolder').onchange = picked; $('inFiles').onchange = picked;
   $('btnClr').onclick = () => { U.files = []; U.log = []; SH.list.forEach(x => URL.revokeObjectURL(x.url)); SH.list = []; drawShots(); $('plog').textContent = 'Progress will appear here.'; };
   $('btnGo').onclick = () => runUpload();
@@ -153,7 +167,7 @@ window.TMSC_DROP = async dt => {
   dragDepth = 0; $('dropveil').classList.add('hidden');
   const p = filesFromDrop(dt); // reads the drop list at once – the browser empties it after the event
   const r = await p; const before = U.files.length;
-  if (r.files.length) addFiles(r.files);
+  if (r.files.length) await addFilesZ(r.files);
   else if (r.blocked) { modal('<h3>Folder could not be read</h3><p>The browser did not allow this page to open the dropped folder. Open the folder, select the files inside (Ctrl+A) and drag those, or use <b>Select files</b>.</p>'); return; }
   const added = U.files.length - before;
   if (S.view !== 'upload' && S.B && S.jobs) { S.view = 'upload'; T.render(); }
@@ -211,7 +225,7 @@ async function runUpload() {
         if (ext === 'pdf') {
           if (f.size > 15e6) { plog(`  ${f.name}: very large PDF – skipped`); continue; }
           const pages = await C.pdfPages(buf);
-          if (C.isRegister(pages)) { const R = C.parseRegister(pages); out.inspections.push(...R); plog(`  ${f.name}: inspection register – ${R.length} inspections (${R[0] ? R[0].type : ''})`); used = true; }
+          if (C.isRegister(pages)) { const R = C.parseRegister(pages); out.inspections.push(...R); plog(`  ${f.name}: ${regText(pages, R)}`); used = R.length > 0; }
         } else {
           const wb = ext === 'xls' ? C.readXLS(buf) : await C.readXLSX(buf);
           for (const sh of wb.sheets) {
@@ -568,12 +582,16 @@ V.settings = async el => {
     const st = await call('settings');
     $('setw').innerHTML = `<div class="panel body"><h3 class="sec">Settings</h3><div class="scroll"><table class="t"><thead><tr><th>Setting</th><th>Value</th><th>Meaning</th></tr></thead><tbody>${st.settings.map(s => `<tr><td class="nw"><b>${esc(s.Key)}</b></td><td><input data-k="${esc(s.Key)}" value="${esc(s.Value)}" style="width:220px;padding:4px 6px;border:1px solid #b9bfc9"></td><td class="small wrap">${esc(s.Note)}</td></tr>`).join('')}</tbody></table></div></div>
       <div class="panel body"><h3 class="sec">Target days by job type</h3><div class="scroll"><table class="t"><thead><tr><th>Job type</th><th>SSE to complete (days)</th><th>AEN to approve (days)</th><th>Photo required</th><th>Closes by TMS data</th></tr></thead><tbody>${st.targets.map(t => `<tr><td>${esc(t.Description)}<div class="small muted">${esc(t.JobType)} · ${esc(t.KPI)}</div></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="SSEDays" value="${esc(t.SSEDays)}" style="width:80px"></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="AENDays" value="${esc(t.AENDays)}" style="width:80px"></td><td><select data-t="${esc(t.JobType)}" data-f="PhotoRequired"><option ${t.PhotoRequired === 'Yes' ? 'selected' : ''}>Yes</option><option ${t.PhotoRequired !== 'Yes' ? 'selected' : ''}>No</option></select></td><td class="small">${esc(t.ClosedByData)}</td></tr>`).join('')}</tbody></table></div>
-      <div style="padding:12px 14px" class="row"><button class="btn primary" id="saveSet">Save settings</button><button class="btn secondary" id="recalc">Recalculate now</button></div></div>`;
+      <div style="padding:12px 14px" class="row"><button class="btn primary" id="saveSet">Save settings</button><button class="btn secondary" id="recalc">Recalculate now</button></div></div>
+      <div class="panel body"><h3 class="sec">Sheet backups</h3><p class="small">Every morning at 05:00 a dated copy of the whole Google Sheet is saved in the Drive folder <b>TMS Control backups</b> (copies are never deleted). Google Sheets also keeps every change under File → Version history.</p>
+      <p id="bkInfo">${st.backup && st.backup.last ? 'Last copy: <b>' + esc(String(st.backup.last).replace('T', ' ').slice(0, 16)) + '</b>' : 'No copy made yet.'}${st.backup && st.backup.folderUrl ? ` · <a href="${esc(st.backup.folderUrl)}" target="_blank" rel="noopener">Open the backup folder</a>` : ''}</p>
+      <div class="row"><button class="btn secondary" id="bkNow">Back up now</button></div></div>`;
     $('saveSet').onclick = async () => {
       const settings = [...document.querySelectorAll('[data-k]')].map(i => ({ Key: i.dataset.k, Value: i.value }));
       const tm = {}; document.querySelectorAll('[data-t]').forEach(i => { (tm[i.dataset.t] = tm[i.dataset.t] || { JobType: i.dataset.t })[i.dataset.f] = i.value; });
       try { await call('saveSettings', { settings, targets: Object.values(tm) }); toast('Saved'); } catch (e) { fail(e); }
     };
+    $('bkNow').onclick = async e => { e.target.disabled = true; try { const r = await call('backupNow', {}, { timeout: 300000 }); $('bkInfo').innerHTML = `Saved: <b>${esc(r.name)}</b> · <a href="${esc(r.url)}" target="_blank" rel="noopener">open the copy</a>`; toast('Backup saved'); } catch (er) { fail(er); } e.target.disabled = false; };
     $('recalc').onclick = async e => { e.target.disabled = true; try { const r = await call('refresh'); toast('Recalculated in ' + r.seconds + ' s'); await T.reload(); } catch (er) { fail(er); } e.target.disabled = false; };
   } catch (e) { fail(e); }
 };

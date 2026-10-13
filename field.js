@@ -103,7 +103,7 @@ function jobRange(j) {
   const w = String(j.Location || '').match(/work\s+(\d+)\/(\d+)\s+to\s+(\d+)\/(\d+)/);
   if (w) return [+w[1] * 1000 + +w[2], +w[3] * 1000 + +w[4]];
   const r = String(j.Location || '').match(/(\d+)\/(\d+)\s*[–-]\s*(\d+)\/(\d+)/); if (r) return [+r[1] * 1000 + +r[2], +r[3] * 1000 + +r[4]];
-  if (j.Pos !== '' && j.Pos != null && isFinite(+j.Pos)) return [Math.max(0, +j.Pos - 30), +j.Pos + 30];
+  if (j.Pos !== '' && j.Pos != null && isFinite(+j.Pos)) { const h = j.Type === 'K7-PEAK' ? 50 : 30; return [Math.max(0, +j.Pos - h), +j.Pos + h]; }   // an OMS peak: 50 m either side, as the job asks
   return [null, null];
 }
 async function editor(job, returned) {
@@ -336,6 +336,7 @@ function readingsTable(sh, pre, post, Lm, job, all) {
 }
 
 // ---------- location history (compare work quality when a peak repeats) ----------
+const INSP_NAME = { CURVE: 'Curve', PXING: 'P&C', DIAMOND: 'Diamond crossing', LC: 'Level crossing', LWR: 'LWR movement', BALLAST: 'Ballast', RAIL: 'Rail', SLEEPER: 'Sleeper' };
 async function history(q, job) { F.histQ = q; F.histJob = job || null; S.view = 'history'; T.render(); }
 V.history = async el => {
   el.innerHTML = '<div class="empty">Loading location history…</div>';
@@ -349,6 +350,8 @@ V.history = async el => {
     `<div class="panel body"><h3 class="sec">Work done here (newest first)</h3>${recs.length ? `<div class="scroll"><table class="t"><thead><tr><th>Work date</th><th>Stretch</th><th>Work</th><th>Readings</th><th>Photos</th><th>Status / result</th></tr></thead><tbody>${recs.map(r => `<tr data-r="${esc(r.RecId)}" style="cursor:pointer"><td class="nw">${dmy(r.WorkDate)}<div class="small">${esc(r.EnteredBy)}</div></td><td class="nw">${r.FromM !== '' ? STN.fmtCh(+r.FromM) + '–' + STN.fmtCh(+r.ToM) : '—'}</td><td class="wrap small">${esc((r.WorkTypes || []).join(', '))}${r.Machine ? '<br>' + esc(r.Machine) : ''}</td><td class="small">${(r.PreSummary || {}).outside != null ? `${r.PreSummary.outside} red before → ${(r.PostSummary || {}).stillOutside} after` : ''}</td><td><div class="thumbs">${thumbs(r)}</div></td><td><span class="${stc(r.Status)}">${esc(r.Status)}</span><br>${resTag(r)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No work recorded here yet.</div>'}</div>` +
     `<div class="panel body"><h3 class="sec">TRC results by run</h3>${runs.length ? `<div class="scroll"><table class="t"><thead><tr><th>Run</th><th>Peaks here</th><th>Blocks (CBML / MI=N / at risk)</th></tr></thead><tbody>${runs.map(run => `<tr><td class="nw"><b>${esc(run)}</b></td><td class="small">${h.peaks.filter(p => p.run === run).map(p => `${STN.fmtCh(p.pos)} ${esc(p.param)} ${esc(p.value)} (${esc(p.status)})`).join('<br>') || '—'}</td><td class="small">${h.blocks.filter(b => b.run === run).map(b => `${b.km}/B${b.block} ${b.irpwm === 'N' ? 'CBML' : b.mi === 'N' ? 'MI=N' : 'at risk'}`).join(', ') || '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No TRC peaks or bad blocks here in the uploaded runs.</div>'}</div>` +
     `<div class="panel body"><h3 class="sec">OMS peaks</h3>${h.oms.length ? `<div class="scroll"><table class="t"><thead><tr><th>Run</th><th>km</th><th>Vertical</th><th>Lateral</th></tr></thead><tbody>${h.oms.sort((a, b) => String(b.run).localeCompare(String(a.run))).map(o => `<tr><td>${esc(o.month || o.run)}</td><td>${o.km}</td><td class="n">${o.vertical}</td><td class="n">${o.lateral}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No OMS peaks here.</div>'}</div>` +
+    ((h.omsPeaks || []).length ? `<div class="panel body"><h3 class="sec">OMS peaks above 0.15 g at this spot</h3><div class="scroll"><table class="t"><thead><tr><th>OMS run</th><th>Location</th><th>Peak</th><th>Status</th></tr></thead><tbody>${h.omsPeaks.sort((a, b) => String(b.run).localeCompare(String(a.run))).map(o => `<tr><td class="nw">${esc(dmy(o.run))}</td><td class="nw">${o.km}/${o.m}</td><td class="nw">${esc(o.dir || '')} ${o.value != null ? (+o.value).toFixed(2) + ' g' : ''}</td><td class="small">${o.closed ? 'Not in the next run (' + esc(dmy(o.closed)) + ')' : 'In the latest run'}</td></tr>`).join('')}</tbody></table></div></div>` : '') +
+    ((h.inspections || []).length ? `<div class="panel body"><h3 class="sec">Inspections recorded in TMS here</h3><div class="scroll"><table class="t"><thead><tr><th>Date</th><th>Inspection</th><th>Asset / stretch</th><th>By</th></tr></thead><tbody>${h.inspections.map(i => `<tr><td class="nw">${esc(dmy(i.date))}</td><td>${esc(INSP_NAME[i.type] || i.type)}</td><td class="small">${esc(i.asset || '')} ${STN.fmtCh(i.kmA * 1000)}${i.kmB !== i.kmA ? ' – ' + STN.fmtCh(i.kmB * 1000) : ''}</td><td class="small">${esc(i.official || '')}${i.desig ? ' (' + esc(i.desig) + ')' : ''}</td></tr>`).join('')}</tbody></table></div></div>` : '') +
     `<div class="panel body"><h3 class="sec">Jobs here</h3>${T.jobTable(h.jobs)}</div>`;
   $('hBack').onclick = () => { S.view = 'work'; T.render(); };
   el.querySelectorAll('tr[data-r]').forEach(tr => tr.onclick = () => openRecord(tr.dataset.r));
