@@ -180,10 +180,17 @@ async function filesFromDrop(dt) {
 }
 
 const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+// Upload parts are safe to send twice (rows are matched by key), so a part that got no answer is sent again after a pause before giving up.
+async function callR(fn, args, opt) {
+  for (let i = 0; ; i++) {
+    try { return await call(fn, args, opt); }
+    catch (e) { if (!e || !e.offline || i >= 2) throw e; plog(`  (no answer from the server – trying again in ${i ? 30 : 10} s)`); await new Promise(r => setTimeout(r, i ? 30000 : 10000)); }
+  }
+}
 const upid = () => 'UP' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 async function send(kind, payload, size = 1500) {
   const recs = payload.records || []; const id = upid(); const parts = recs.length ? chunk(recs, size) : [[]]; let tot = { inserted: 0, updated: 0, closed: 0 };
-  for (let i = 0; i < parts.length; i++) { const r = await call('ingest', Object.assign({}, payload, { kind, records: parts[i], uploadId: id, final: i === parts.length - 1, total: recs.length }), { timeout: 330000 }); for (const k in tot) tot[k] += r[k] || 0; }
+  for (let i = 0; i < parts.length; i++) { const r = await callR('ingest', Object.assign({}, payload, { kind, records: parts[i], uploadId: id, final: i === parts.length - 1, total: recs.length }), { timeout: 330000 }); for (const k in tot) tot[k] += r[k] || 0; }
   return tot;
 }
 async function runUpload() {
@@ -235,7 +242,7 @@ async function runUpload() {
     }
     for (const [k, g] of Object.entries(geo)) {
       if (!g.recs.length) continue; const secs = [...new Set(g.recs.map(r => r.section).filter(Boolean))]; const parts = chunk(g.recs, 1500);
-      for (let i = 0; i < parts.length; i++) { await call('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') }, { timeout: 330000 }); if (parts.length > 1) plog(`  ${GEO_NAME[k]}: part ${i + 1} of ${parts.length} stored`); }
+      for (let i = 0; i < parts.length; i++) { await callR('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') }, { timeout: 330000 }); if (parts.length > 1) plog(`  ${GEO_NAME[k]}: part ${i + 1} of ${parts.length} stored`); }
       plog(`${GEO_NAME[k]}: ${g.recs.length} rows stored for worksite tagging (${secs.length} section(s))`);
     }
     if (pngs.length) await runTRC(pngs, trcFiles);
