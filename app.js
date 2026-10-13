@@ -30,6 +30,7 @@ async function call(fn, args, opt = {}) {
     r = await res.json();
   } catch (e) {
     if (ck) { const c = await ST.get('kv', ck).catch(() => null); if (c) { setNet(false, c.at); return c.data; } }
+    if (e && e.message === 'timeout') throw { error: 'The server is still working on this (no answer in ' + Math.round((opt.timeout || 120000) / 1000) + ' s). Open Upload history in a few minutes to see whether it finished before trying again.', timeout: true };
     setNet(false); throw { error: navigator.onLine === false ? 'No signal – this needs the network' : 'Could not reach the server – try again', offline: true };
   }
   setNet(true);

@@ -183,7 +183,7 @@ const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.
 const upid = () => 'UP' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 async function send(kind, payload, size = 1500) {
   const recs = payload.records || []; const id = upid(); const parts = recs.length ? chunk(recs, size) : [[]]; let tot = { inserted: 0, updated: 0, closed: 0 };
-  for (let i = 0; i < parts.length; i++) { const r = await call('ingest', Object.assign({}, payload, { kind, records: parts[i], uploadId: id, final: i === parts.length - 1, total: recs.length })); for (const k in tot) tot[k] += r[k] || 0; }
+  for (let i = 0; i < parts.length; i++) { const r = await call('ingest', Object.assign({}, payload, { kind, records: parts[i], uploadId: id, final: i === parts.length - 1, total: recs.length }), { timeout: 330000 }); for (const k in tot) tot[k] += r[k] || 0; }
   return tot;
 }
 async function runUpload() {
@@ -234,8 +234,8 @@ async function runUpload() {
       try { const wb = ext === 'xls' ? C.readXLS(tf.buf) : await C.readXLSX(tf.buf); for (const sh of wb.sheets) { const k = C.classifySheet(sh.rows, sh.name); if (!GEO_NAME[k]) continue; const recs = C.parseSheet(k, sh.rows); const g = geo[k] = geo[k] || { recs: [], files: [] }; g.recs.push(...recs); g.files.push(tf.name); } } catch (e) { /* not a register */ }
     }
     for (const [k, g] of Object.entries(geo)) {
-      if (!g.recs.length) continue; const secs = [...new Set(g.recs.map(r => r.section).filter(Boolean))]; const parts = chunk(g.recs, 2000);
-      for (let i = 0; i < parts.length; i++) await call('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') });
+      if (!g.recs.length) continue; const secs = [...new Set(g.recs.map(r => r.section).filter(Boolean))]; const parts = chunk(g.recs, 1500);
+      for (let i = 0; i < parts.length; i++) { await call('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') }, { timeout: 330000 }); if (parts.length > 1) plog(`  ${GEO_NAME[k]}: part ${i + 1} of ${parts.length} stored`); }
       plog(`${GEO_NAME[k]}: ${g.recs.length} rows stored for worksite tagging (${secs.length} section(s))`);
     }
     if (pngs.length) await runTRC(pngs, trcFiles);
