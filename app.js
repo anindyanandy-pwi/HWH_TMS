@@ -12,6 +12,7 @@ const UA = (() => { const u = navigator.userAgent; const m = u.match(/Android [\
 // personal link: ?t=… is kept on this phone and removed from the address bar
 (() => { const q = new URLSearchParams(location.search); const t = q.get('t'); if (t) { try { localStorage.setItem('tmsc.token', t); } catch (e) { } history.replaceState(null, '', location.pathname); } })();
 let TOKEN = ''; try { TOKEN = localStorage.getItem('tmsc.token') || ''; } catch (e) { }
+let KEY = ''; try { KEY = localStorage.getItem('tmsc.key') || ''; } catch (e) { }   // phone key from signing in with the mobile number (common link)
 
 // ---------- server calls ----------
 function fetchT(url, opt, ms) { return new Promise((res, rej) => { const c = new AbortController(); const t = setTimeout(() => { c.abort(); rej(new Error('timeout')); }, ms); fetch(url, Object.assign({ signal: c.signal }, opt)).then(r => { clearTimeout(t); res(r); }, e => { clearTimeout(t); rej(e); }); }); }
@@ -22,7 +23,7 @@ function setNet(ok, cachedAt) {
   b.classList.remove('hidden'); b.textContent = navigator.onLine === false ? `No signal – showing data saved on this phone${cachedAt ? ' (' + String(cachedAt).replace('T', ' ').slice(0, 16) + ')' : ''}. Work records are kept and sent when signal returns.` : `Server not reachable – showing saved data${cachedAt ? ' (' + String(cachedAt).replace('T', ' ').slice(0, 16) + ')' : ''}.`;
 }
 async function call(fn, args, opt = {}) {
-  const body = JSON.stringify({ t: TOKEN, d: DEV, ua: UA, fn, args: args || {} });
+  const body = JSON.stringify({ t: TOKEN, k: TOKEN ? '' : KEY, d: DEV, ua: UA, fn, args: args || {} });
   const ck = opt.cache ? 'c:' + fn + ':' + JSON.stringify(args || {}) : null;
   let r;
   try {
@@ -43,7 +44,8 @@ function denied(msg, pending) {
   const m = esc(String(msg).replace(/^ACCESS(_PENDING)?:\s*/, ''));
   $('views').innerHTML = pending
     ? `<div class="denied" style="border-top-color:var(--warn)"><div class="eyebrow">New phone</div><h2>Waiting for approval</h2><p>${m}</p><p class="muted">Keep this app open or come back later – it checks again every 30 seconds.</p><button class="btn primary" id="reTry">Check now</button><p class="small muted" style="margin-top:14px">Phone: ${esc(UA)}</p></div>`
-    : `<div class="denied"><div class="eyebrow">Access</div><h2>Cannot open TMS Control</h2><p>${m}</p><p class="muted">Only users added by the division office can open this app, using their own personal link.</p></div>`;
+    : `<div class="denied"><div class="eyebrow">Access</div><h2>Cannot open TMS Control</h2><p>${m}</p><button class="btn primary" id="toJoin">Sign in</button><p class="muted" style="margin-top:12px">Only users added by the division office can open this app.</p></div>`;
+  if (!pending) $('toJoin').onclick = () => { try { localStorage.removeItem('tmsc.key'); localStorage.removeItem('tmsc.token'); } catch (e) { } TOKEN = ''; KEY = ''; joinScreen(); };
   if (pending) { $('reTry').onclick = () => location.reload(); clearTimeout(window.__retryT); window.__retryT = setTimeout(() => location.reload(), 30000); }
 }
 const fail = e => toast((e && e.error) || (e && e.message) || String(e), true);
@@ -61,11 +63,11 @@ const VIEWS = window.TMSC_VIEWS = {};
 const NAVS = {
   JE: [['work', 'My work'], ['records', 'My work records'], ['position', 'My position'], ['done', 'Done & closed']],
   SSE: [['work', 'My work'], ['review', 'Check JE work'], ['records', 'Work records'], ['position', 'My position'], ['kpi', 'KPI detail'], ['done', 'Done & closed']],
-  AEN: [['review', 'Approve work'], ['overview', 'Units'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['quality', 'Work quality'], ['phones', 'Phone approvals'], ['chronic', 'Chronic locations']],
-  SRDEN: [['overview', 'Overview'], ['review', 'Pending reviews'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['quality', 'Work quality'], ['phones', 'Phone approvals'], ['plan', 'Machine plan'], ['chronic', 'Chronic locations']],
-  SRDENC: [['overview', 'Division'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['quality', 'Work quality'], ['phones', 'Phone approvals'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations']],
-  VIEWER: [['overview', 'Division'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['position', 'KPI standing'], ['quality', 'Work quality'], ['kpi', 'KPI by unit']],
-  ADMIN: [['overview', 'Division'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['quality', 'Work quality'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations'], ['#Admin'], ['upload', 'Upload data'], ['users', 'Users'], ['phones', 'Phone approvals'], ['settings', 'Settings'], ['uploads', 'Upload history']]
+  AEN: [['review', 'Approve work'], ['overview', 'Units'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['chronic', 'Chronic locations']],
+  SRDEN: [['overview', 'Overview'], ['review', 'Pending reviews'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['plan', 'Machine plan'], ['chronic', 'Chronic locations']],
+  SRDENC: [['overview', 'Division'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations']],
+  VIEWER: [['overview', 'Division'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['position', 'KPI standing'], ['kpi', 'KPI by unit']],
+  ADMIN: [['overview', 'Division'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations'], ['#Admin'], ['upload', 'Upload data'], ['users', 'Users'], ['settings', 'Settings'], ['uploads', 'Upload history']]
 };
 const OPEN = ['Open', 'In progress', 'Returned', 'Still defective'];
 const isOpen = j => OPEN.includes(j.Status);
@@ -74,9 +76,42 @@ const role = () => S.B.user.Role;
 const recMode = j => (S.B.recordModes || {})[j.Type] || 'full';
 window.TMSC.isOpen = isOpen; window.TMSC.inUnit = inUnit; window.TMSC.role = () => role(); window.TMSC.recMode = recMode; window.TMSC.OPEN = OPEN;
 
+// ---------- sign in on the common link (the plain app address): mobile number + name + designation, no approval ----------
+async function joinScreen() {
+  $('rail').classList.add('hidden'); $('boot').classList.add('hidden'); $('banner').innerHTML = '';
+  const draw = inner => { $('views').innerHTML = `<div class="denied" style="max-width:520px"><div class="eyebrow">HWH TMS Control · Howrah Division</div><h2>Sign in</h2>${inner}<p class="small muted" style="margin-top:16px">Phone: ${esc(UA)}</p></div>`; };
+  draw('<div class="empty">Loading…</div>');
+  let O; try { O = await call('joinOptions'); } catch (e) { draw(`<p class="od">${esc((e && e.error) || e)}</p><button class="btn primary" onclick="location.reload()">Try again</button>`); return; }
+  const v = { mobile: '', name: '', post: '', charge: '' };
+  const chargeSel = post => { const P = O.posts.find(x => x.id === post); if (!P || !P.need) return '';
+    const list = P.need === 'unit' ? O.units.map(u => [u.unit, u.unit + (u.label && u.label !== u.unit ? ' – ' + u.label : '')]) : (P.need === 'aen' ? O.aens : O.srdens).map(x => [x, x]);
+    return `<div class="fld"><label>${P.need === 'unit' ? 'Unit (SSE section)' : P.need === 'aen' ? 'AEN charge' : 'Sr DEN charge'}</label><select id="jCh"><option value="">– choose –</option>${list.map(([k, t]) => `<option value="${esc(k)}" ${k === v.charge ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>`; };
+  const ask = msg => {
+    draw(`<p>Enter your details once. The app then opens directly on this phone.</p>${msg ? `<p class="od">${esc(msg)}</p>` : ''}
+      <div class="fld"><label>Mobile number</label><input id="jMob" inputmode="tel" autocomplete="tel" maxlength="16" placeholder="10-digit mobile number" value="${esc(v.mobile)}" style="font-size:17px"></div>
+      <div class="fld"><label>Full name</label><input id="jName" autocomplete="name" maxlength="60" placeholder="e.g. Ravi Das" value="${esc(v.name)}" style="font-size:17px"></div>
+      <div class="fld"><label>Designation</label><select id="jPost"><option value="">– choose –</option>${O.posts.map(p => `<option value="${esc(p.id)}" ${p.id === v.post ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></div>
+      <div id="jChBox">${chargeSel(v.post)}</div><button class="btn primary" id="jGo" style="margin-top:6px">Sign in</button>`);
+    const keep = () => { v.mobile = $('jMob').value; v.name = $('jName').value; v.post = $('jPost').value; v.charge = $('jCh') ? $('jCh').value : ''; };
+    $('jPost').onchange = () => { keep(); v.charge = ''; $('jChBox').innerHTML = chargeSel(v.post); };
+    $('jGo').onclick = () => { keep(); const P = O.posts.find(x => x.id === v.post);
+      const miss = []; if (String(v.mobile).replace(/\D/g, '').length < 10) miss.push('mobile number'); if (v.name.trim().length < 3) miss.push('full name'); if (!P) miss.push('designation'); else if (P.need && !v.charge) miss.push(P.need === 'unit' ? 'unit' : 'charge');
+      if (miss.length) { ask('Fill in: ' + miss.join(', ')); return; } go(); };
+  };
+  const go = async pick => {
+    const b = $('jGo'); if (b) b.disabled = true;
+    try {
+      const r = await call('join', Object.assign({}, v, { pick }));
+      if (r.choose) { draw(`<p>More than one person is registered with this number. Who are you?</p>${r.choose.map(c => `<button class="btn secondary" style="display:block;margin:6px 0;width:100%;text-align:left" data-p="${esc(c.id)}"><b>${esc(c.name)}</b> · ${esc(c.role)}${c.scope ? ' · ' + esc(c.scope) : ''}</button>`).join('')}`); $('views').querySelectorAll('[data-p]').forEach(x => x.onclick = () => go(x.dataset.p)); return; }
+      try { localStorage.setItem('tmsc.key', r.key); localStorage.removeItem('tmsc.token'); } catch (e) { }
+      location.reload();
+    } catch (e) { ask((e && e.error) || String(e)); }
+  };
+  ask('');
+}
 async function boot() {
   if (!CFG.API) { $('boot').innerHTML = '<div class="denied"><h2>Not set up</h2><p>The app address of the server is missing (config.js). The admin has to run push.bat.</p></div>'; return; }
-  if (!TOKEN) { $('boot').classList.add('hidden'); $('views').innerHTML = `<div class="denied"><div class="eyebrow">Welcome</div><h2>Open your personal link</h2><p>Open the personal link sent to you by the division office (WhatsApp / email) on this phone. After that the app opens directly from the home screen.</p></div>`; return; }
+  if (!TOKEN && !KEY) { joinScreen(); return; }
   try {
     S.B = await call('bootstrap', {}, { cache: true });
     const u = S.B.user; $('who').classList.remove('hidden'); $('whoRole').textContent = u.RoleName; $('whoName').textContent = u.Name; $('whoScope').textContent = u.Scope ? '· ' + u.Scope : '';
@@ -130,7 +165,6 @@ function banner() {
   if (r === 'SSE' && p.review) out.push(`<div class="ban ${p.reviewOver ? 'crit' : 'warn'}"><b>${p.review}</b> JE work record(s) waiting for your check${p.reviewOver ? ` – <b>${p.reviewOver}</b> beyond time` : ''}. <a href="#" data-go="review">Check now</a></div>`);
   if (r === 'AEN' && p.review) out.push(`<div class="ban ${p.reviewOver ? 'crit' : 'warn'}"><b>${p.review}</b> work record(s) waiting for your approval${p.reviewOver ? ` – <b>${p.reviewOver}</b> beyond time` : ''}. <a href="#" data-go="review">Approve now</a></div>`);
   if (['SRDEN', 'SRDENC', 'ADMIN'].includes(r) && (p.sse || p.aen)) out.push(`<div class="ban ${p.sseOver || p.aenOver ? 'crit' : 'warn'}">Waiting for review: <b>${p.sse || 0}</b> with SSEs${p.sseOver ? ` (${p.sseOver} late)` : ''} · <b>${p.aen || 0}</b> with AENs${p.aenOver ? ` (${p.aenOver} late)` : ''}. <a href="#" data-go="review">See who</a></div>`);
-  if (p.devices) out.push(`<div class="ban warn"><b>${p.devices}</b> new phone(s) waiting for your approval. <a href="#" data-go="phones">Approve</a></div>`);
   el.innerHTML = out.join('');
   el.querySelectorAll('[data-go]').forEach(a => a.onclick = e => { e.preventDefault(); S.view = a.dataset.go; S.f = {}; render(); });
 }
@@ -314,7 +348,7 @@ function drawJob(j, log) {
   }
   if (recs.length) acts += `<div class="actbox"><h4>Work record${recs.length > 1 ? 's' : ''}</h4>${recs.map(x => `<div class="row" style="margin:4px 0"><span class="${stc(x.Status)}">${esc(x.Status)}</span><span>${esc(x.RecId || 'not sent yet')} · ${dmy(x.WorkDate)} · ${esc(x.EnteredBy || '')}</span>${x.Result ? `<b>${esc(x.Result)}</b>` : ''}<button class="btn ghost sm" data-rec="${esc(x.RecId || x.ClientId)}">Open</button></div>`).join('')}</div>`;
   if ((r === 'AEN' || r === 'ADMIN') && j.Status === 'Done' && !recs.length) acts += `<div class="actbox"><h4>AEN approval (marked done before work records were introduced)</h4><div class="fld"><label>Remark / reason (required to return)</label><textarea id="aNote2"></textarea></div><div class="row"><button class="btn primary" id="aApprove">Approve</button><button class="btn secondary" id="aReturn">Return to SSE</button></div></div>`;
-  acts += `<div class="actbox"><h4>Location history</h4><p class="small">Earlier TRC / OMS results, jobs and work records with photos at this location – to compare work quality when a peak repeats.</p><button class="btn secondary sm" id="aHist">Show location history</button></div>`;
+  acts += `<div class="actbox"><h4>Location history</h4><p class="small">Earlier TRC / OMS results, inspections, jobs and work records with photos at this location.</p><button class="btn secondary sm" id="aHist">Show location history</button></div>`;
   if (['SSE', 'JE', 'AEN', 'SRDEN', 'SRDENC', 'ADMIN'].includes(r)) acts += `<div class="actbox"><h4>Add remark</h4><div class="fld"><textarea id="aNote3" placeholder="Site constraint, block not available, material awaited…"></textarea></div><button class="btn secondary sm" id="aNoteBtn">Save remark</button></div>`;
   d.innerHTML = `<div class="dhead"><div style="flex:1">${prTag(j.Priority)} <span class="${stc(j.Status)}">${esc(j.Status)}</span> ${j.Overdue ? `<span class="od">Overdue</span>` : ''}<h2>${esc(j.Title)}</h2><div class="muted">${esc(j.TypeName)} · Job ${esc(j.JobId)}</div></div><button class="btn secondary sm" id="dClose">Close</button></div>
   <div class="dbody"><dl class="dl">${dl('Exact location', `<b class="loc">${esc(j.Location)}</b>`)}${dl('Unit', esc(j.Unit))}${dl('Near', esc(j.Near))}${dl('Defect found', esc(j.Defect))}${dl('What to do', esc(j.Action))}${dl('Look for', esc(j.LookFor))}
@@ -334,11 +368,11 @@ window.TMSC.openJob = openJob;
 
 function helpHtml() {
   const r = role();
-  const common = `<h3>How this works</h3><ul><li>Every job is one piece of field work with its exact location and what to do. Jobs come from the TMS data uploaded by the division office (TRC, OMS, inspections, defects, DFWR, oiling & greasing).</li><li>Work done is recorded in a <b>work record</b>: measurements before and after, work done and photos with time and GPS location. It works without signal and is sent automatically when signal returns.</li><li>JE work is checked by the SSE, then approved by the AEN. After approval the record is locked.</li><li>The next TRC run / TMS data judges approved work: <b>Held</b>, <b>Improved</b> or <b>Failed</b>.</li></ul>`;
-  const per = { JE: `<h3>JE</h3><ol><li><b>My work</b>: open a job, tap <b>Record work done</b>.</li><li>Enter the worksite chainage; the sheet of measuring points is made for you (3 m gauge / cross level; 3.6 m or 10 m alignment / versine; P&C form).</li><li>Cross level: write the lower rail, e.g. 15L or 8R.</li><li>Take the photos in the app (location must be on).</li><li>Returned records show at the top – correct and send again.</li></ol>`,
-    SSE: `<h3>SSE</h3><ol><li><b>Check JE work</b>: open each record, check readings and photos, then <b>Send to AEN</b> or <b>Return</b> with the reason.</li><li>Your own records go straight to the AEN.</li><li><b>My position</b> shows marks lost per KPI item and exactly what to do to win them back.</li></ol>`,
-    AEN: `<h3>AEN</h3><ol><li><b>Approve work</b>: check readings (red = outside limit) and photos (time, GPS), then Approve or Return.</li><li><b>Phone approvals</b>: approve the new phones of your SSEs / JEs.</li><li><b>Work quality</b>: share of approved work that held at the next TRC run.</li></ol>` };
-  return common + (per[r] || `<h3>Monitoring</h3><p>The banner at the top shows work waiting for review at SSE and AEN level. KPI standing shows every unit's marks and rank; Work quality shows how much approved work held.</p>`) + `<p class="muted">Your link is personal. Do not forward it – a new phone needs approval.</p>`;
+  const common = `<h3>How this works</h3><ul><li>Every job is one piece of field work with its exact location and what to do. Jobs come from the TMS data uploaded by the division office (TRC, OMS, inspections, defects, DFWR, oiling & greasing).</li><li>Work done is recorded in a <b>work record</b>: work done, photos of the handwritten measurement sheets (before and after) and worksite photos with time and GPS location. It works without signal and is sent automatically when signal returns.</li><li>JE work is checked by the SSE, then approved by the AEN. After approval the record is locked.</li><li>The next TRC run / TMS data judges approved work: <b>Held</b>, <b>Improved</b> or <b>Failed</b>.</li></ul>`;
+  const per = { JE: `<h3>JE</h3><ol><li><b>My work</b>: open a job, tap <b>Record work done</b>.</li><li>Enter the worksite chainage and the work done.</li><li>Photograph the handwritten measurement sheets – before work and after work (camera or gallery). Readings are not typed.</li><li>Take the worksite photos in the app (location must be on).</li><li>Returned records show at the top – correct and send again.</li></ol>`,
+    SSE: `<h3>SSE</h3><ol><li><b>Check JE work</b>: open each record, check the measurement sheet photos and site photos, then <b>Send to AEN</b> or <b>Return</b> with the reason.</li><li>Your own records go straight to the AEN.</li><li><b>My position</b> shows marks lost per KPI item and exactly what to do to win them back.</li></ol>`,
+    AEN: `<h3>AEN</h3><ol><li><b>Approve work</b>: check the measurement sheet photos (before and after) and site photos (time, GPS), then Approve or Return.</li></ol>` };
+  return common + (per[r] || `<h3>Monitoring</h3><p>The banner at the top shows work waiting for review at SSE and AEN level. KPI standing shows every unit's marks and rank.</p>`) + `<p class="muted">This phone stays signed in. Do not let others use it to enter work in your name. A phone not used for 90 days is signed out – sign in again with your mobile number, name and designation.</p>`;
 }
 document.addEventListener('DOMContentLoaded', boot);
 if (document.readyState !== 'loading') boot();

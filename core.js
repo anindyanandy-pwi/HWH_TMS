@@ -1817,7 +1817,7 @@ function parseRegister(pages) {
         if (inl) { cur.f[inl[1]] = inl[2].trim(); continue; }
         if (LABELS.includes(c)) {
           const nx = cells[i + 1];
-          if (nx != null && nx.startsWith(':')) { cur.f[c] = nx.slice(1).trim(); i++; }
+          if (nx != null && nx.startsWith(':')) { cur.f[c] = nx.slice(1).trim(); i++; if (c === 'Inspecting Official' && !/\(.+\)\s*$/.test(cur.f[c])) wantDesig = true; }   // the designation often stands alone on the next row
           else if (c === 'Inspecting Official') { cur.f[c] = orphan || ''; orphan = null; wantDesig = true; }
         }
       }
@@ -2004,8 +2004,8 @@ function classifyKpiSheet(rows, name = '') {
   if (/dfwr/.test(t)) return 'dfwr';
   if (/oiling\s*&\s*greasing/.test(t)) return 'og';
   if (/section/.test(t) && /equivalent section/.test(t)) return 'jurisdiction';
-  if (rows.slice(0, 8).some(r => (r || []).some(c => /^WHETHER JOGGLED$/i.test(S(c))))) return 'weldReg';
-  if (rows.slice(0, 8).some(r => (r || []).some(c => /^MONTH OF LAST OILING AND GREASING$/i.test(S(c))))) return 'fpReg';
+  if (rows.slice(0, 40).some(r => (r || []).some(c => /^WHETHER\s+JOGGLED$/i.test(S(c))))) return 'weldReg';
+  if (rows.slice(0, 40).some(r => (r || []).some(c => /^MONTH OF LAST OILING AND GREASING$/i.test(S(c))))) return 'fpReg';
   return null;
 }
 
@@ -2121,7 +2121,7 @@ function og(rows) {
 
 // Weld asset register – summary only (AT welds, joggled or not, welded in last 6 months)
 function weldReg(rows) {
-  const hi = rows.findIndex(r => (r || []).some(c => /^WHETHER JOGGLED$/i.test(S(c)))); const H = rows[hi].map(S);
+  const hi = rows.findIndex(r => (r || []).some(c => /^WHETHER\s+JOGGLED$/i.test(S(c)))); const H = rows[hi].map(S);
   const c = k => H.indexOf(k); const iSec = c('SECTION'), iLine = c('LINE'), iType = c('WELD TYPE'), iDate = c('DATE OF WELDING'), iJog = c('WHETHER JOGGLED'), iKm = c('KM FROM'), iM = c('MET FROM'), iStn = c('STATION'), iX = c('XOVER'), iRes = c('LAST USFD INSP. RESULT'), iWT = c('LAST USFD TESTING DATE(WELD)');
   const recs = [];
   for (const r of rows.slice(hi + 1)) {
