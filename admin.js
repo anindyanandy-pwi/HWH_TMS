@@ -90,7 +90,10 @@ V.upload = async el => {
   wireDrop(); wireShots(); drawQueue();
   try { const st = await call('dataStatus'); $('chk').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>Report</th><th>How often</th><th>Last upload</th><th>Records</th></tr></thead><tbody>${st.map(r => `<tr><td class="wrap">${esc(r.what)}</td><td class="nw small">${esc(r.when)}</td><td class="nw">${r.last ? dmy(r.last) + `<div class="small">as on ${dmy(r.asOn)}</div>` : '<span class="od">never</span>'}</td><td class="n">${r.records ?? ''}</td></tr>`).join('')}</tbody></table></div>`; } catch (e) { fail(e); }
 };
-function plog(m) { U.log.push(m); const p = $('plog'); if (p) { p.textContent = U.log.join('\n'); p.scrollTop = p.scrollHeight; } }
+function plog(m) { U.log.push(m); const p = $('plog'); if (p) { p.textContent = U.log.join('\n'); p.scrollTop = p.scrollHeight; } if (W.runId) window.postMessage({ __tmsc: 'progress', runId: W.runId, line: String(m).trim() }, location.origin); }
+// asset registers TMS Control does not read (rail, sleeper, fastening … – hundreds of MB per run): never opened, never uploaded
+const UNUSED_REG = /^AssetRegister_(RAIL|FASTENING|SLEEPER|RAIL_PAD|LINER|Welding_Team|LAND_BOUNDARY|DRAINAGE|EROSION|FORMATION|PROTECTION|WEAK|TUNNEL|TRACK_TYPE|BUFFER|SAND_HUMP|Steel_Channel)/i;
+const pause = () => new Promise(r => setTimeout(r, 0));   // lets the page breathe between large files
 function drawQueue() {
   const q = $('queue'); if (!q) return;
   const png = U.files.filter(f => /\.png$/i.test(f.name)).length, docs = U.files.filter(f => !/\.png$/i.test(f.name));
@@ -104,13 +107,13 @@ function drawQueue() {
 }
 // what the upload will take from one report file (read here, nothing is sent)
 async function inspectFile(f) {
-  const ext = f.name.split('.').pop().toLowerCase(), lines = []; let ok = false;
+  const ext = f.name.split('.').pop().toLowerCase(), lines = []; let ok = false; const use = { geo: false, trc: false };
   try {
     const buf = await f.arrayBuffer();
     if (ext === 'pdf') {
       if (f.size > 15e6) { lines.push('Very large PDF – will be skipped'); }
       else { const pages = await C.pdfPages(buf); if (C.isRegister(pages)) { const R = C.parseRegister(pages); ok = R.length > 0; lines.push(regText(pages, R)); }
-        else { const k = C.classifyPdf(await C.pdfLines(buf)); ok = !!k; lines.push(k ? (C.KINDS[k] || k) + ' – used for the TRC analysis' : 'Not a TMS report this program knows'); } }
+        else { const k = C.classifyPdf(await C.pdfLines(buf)); ok = !!k; use.trc = !!k; lines.push(k ? (C.KINDS[k] || k) + ' – used for the TRC analysis' : 'Not a TMS report this program knows'); } }
     } else {
       const wb = ext === 'xls' ? C.readXLS(buf) : await C.readXLSX(buf);
       for (const sh of wb.sheets) {
@@ -118,7 +121,7 @@ async function inspectFile(f) {
         const k = C.classifyKpiSheet(sh.rows, sh.name);
         if (k === 'jurisdiction') { ok = true; lines.push(tag + `Jurisdiction details – ${sh.rows.length - 1} rows`); continue; }
         if (k) { const r = C.parseKpiSheet(k, sh.rows, sh.name); ok = ok || r.records.length > 0; lines.push(tag + `${KIND_NAME[k] || k} – ${r.records.length} rows${r.records.length ? '' : ' (no rows found – check the file)'}`); if (k !== 'weldReg' && k !== 'fpReg') continue; }
-        const g = C.classifySheet(sh.rows, sh.name);
+        const g = C.classifySheet(sh.rows, sh.name); if (g) { if (GEO_NAME[g]) use.geo = true; else use.trc = true; }
         if (g && !(k && (k === 'weldReg' || k === 'fpReg') && !GEO_NAME[g])) {
           const recs = C.parseSheet(g, sh.rows); const secs = new Set(recs.map(r => r.section).filter(Boolean));
           if (!k) { ok = ok || recs.length > 0; lines.push(tag + `${GEO_NAME[g] ? GEO_NAME[g] + ' (worksite tagging)' : C.KINDS[g] || g} – ${recs.length} rows, ${secs.size} section(s)${recs.length ? '' : ' (no rows found – check the file)'}`); }
@@ -127,7 +130,7 @@ async function inspectFile(f) {
       }
     }
   } catch (e) { lines.push('Could not open: ' + (e.message || e)); }
-  f.__info = { ok, lines }; drawQueue();
+  f.__info = { ok, lines, use }; drawQueue();
 }
 // e.g. "Curve inspection register – 203 inspections"; a blank form says so
 function regText(pages, R) {
@@ -152,9 +155,10 @@ async function addFilesZ(list) {
   addFiles(flat);
 }
 function addFiles(list) {
-  const have = new Set(U.files.map(f => f.name + '|' + f.size)); const jpg = [];
-  for (const f of list) { if (/\.jpe?g$/i.test(f.name)) { jpg.push(f); continue; } if (/\.(png|xls|xlsx|pdf)$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name + '|' + f.size)) U.files.push(f); }
+  const have = new Set(U.files.map(f => f.name + '|' + f.size)); const jpg = []; let unused = 0;
+  for (const f of list) { if (/\.jpe?g$/i.test(f.name)) { jpg.push(f); continue; } if (UNUSED_REG.test(f.name)) { unused++; continue; } if (/\.(png|xls|xlsx|pdf)$/i.test(f.name) && !/^~\$/.test(f.name) && !have.has(f.name + '|' + f.size)) U.files.push(f); }
   if (jpg.length) addShots(jpg);   // JPG pictures are screenshots, never TRC pages
+  if (unused) { const n = `${unused} asset register file(s) TMS Control does not use (rail, sleeper, fastening …) – left out`; if (W.runId) { W.notes.push(n); plog('  ' + n); } else toast(n); }
   drawQueue();
   (async () => { for (const f of U.files) if (!/\.png$/i.test(f.name) && !f.__info) await inspectFile(f); })();
 }
@@ -224,11 +228,17 @@ async function runUpload() {
   if (unchecked.length) { toast(`${unchecked.length} screenshot(s) not checked yet. Click "Check" on each (or remove it with ✕), then upload.`, true); $('shotList').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   if (!U.files.length && !shots.length && !W.sets.length && !W.pages.length && !W.usfd.length) { toast('Select files first', true); return; }
   U.running = true; $('btnGo').disabled = true; U.log = []; const t0 = Date.now();
+  try { await doUpload(t0); } finally { U.running = false; const b = $('btnGo'); if (b) b.disabled = false; }
+}
+async function doUpload(t0) {
   try {
     const pngs = U.files.filter(f => /\.png$/i.test(f.name)); const docs = U.files.filter(f => !/\.png$/i.test(f.name));
     const out = { inspections: [], jurisdiction: null }; const trcFiles = []; const kpiSets = [];
-    plog(`Reading ${docs.length} report file(s) on this computer…`);
+    if (W.runId) for (const n of W.notes) plog('TMS Collector: ' + n);
+    plog(`Reading ${docs.length} report file(s) on this computer…`); let fi = 0;
     for (const f of docs) {
+      fi++; await pause(); if (f.__info && f.__info.unused) continue;
+      if (docs.length > 20 && fi % 20 === 0) plog(`  … ${fi} of ${docs.length} file(s) read`);
       const buf = await f.arrayBuffer(); const ext = f.name.split('.').pop().toLowerCase(); let used = false;
       try {
         if (ext === 'pdf') {
@@ -246,7 +256,8 @@ async function runUpload() {
           }
         }
       } catch (e) { plog(`  ${f.name}: could not read – ${e.message}`); continue; }
-      if (!used) trcFiles.push({ name: f.name, size: f.size, buf });
+      // what inspectFile found decides whether a file is read again for the asset registers or the TRC analysis (no info: both)
+      if (!used) { const u = f.__info && f.__info.use; if (!u || u.geo || u.trc) trcFiles.push({ name: f.name, size: f.size, buf, geo: !u || u.geo, trc: !u || u.trc }); }
     }
     for (const p of shotSets()) { if (p.records.length) kpiSets.push(p); else plog(`${KIND_NAME[p.kind]} (${p.scope.section} ${p.scope.line}): no rows with values`); }
     if (W.sets.length || W.usfd.length) { plog(`From the TMS Collector: ${W.sets.length} report(s)${W.usfd.length ? `, USFD defects of ${W.usfdLines.length} section-line(s)` : ''}${W.pages.length ? `, ${W.pages.length} TRC km page(s)` : ''}`); kpiSets.push(...W.sets.filter(x => x.records.length || x.kind === 'omsPeak')); }
@@ -260,9 +271,10 @@ async function runUpload() {
       plog(`${KIND_NAME[s.kind]}: ${r.inserted} new, ${r.updated} updated${r.closed ? ', ' + r.closed + ' closed (no longer in TMS)' : ''}`);
     }
     // asset registers: stored on the server so a worksite can be tagged with its curves, P&C, LC, SEJ… and the measuring points laid out
-    const geo = {};
-    for (const tf of trcFiles) {
-      const ext = tf.name.split('.').pop().toLowerCase(); if (ext !== 'xls' && ext !== 'xlsx') continue;
+    const geo = {}; const geoFiles = trcFiles.filter(tf => tf.geo && /\.xlsx?$/i.test(tf.name)); let gi = 0;
+    if (geoFiles.length) plog(`Reading ${geoFiles.length} asset register(s) for worksite tagging…`);
+    for (const tf of geoFiles) {
+      const ext = tf.name.split('.').pop().toLowerCase(); await pause(); if (++gi % 10 === 0) plog(`  … ${gi} of ${geoFiles.length}`);
       try { const wb = ext === 'xls' ? C.readXLS(tf.buf) : await C.readXLSX(tf.buf); for (const sh of wb.sheets) { const k = C.classifySheet(sh.rows, sh.name); if (!GEO_NAME[k]) continue; const recs = C.parseSheet(k, sh.rows); const g = geo[k] = geo[k] || { recs: [], files: [] }; g.recs.push(...recs); g.files.push(tf.name); } } catch (e) { /* not a register */ }
     }
     for (const [k, g] of Object.entries(geo)) {
@@ -270,11 +282,10 @@ async function runUpload() {
       for (let i = 0; i < parts.length; i++) { await callR('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') }, { timeout: 330000 }); if (parts.length > 1) plog(`  ${GEO_NAME[k]}: part ${i + 1} of ${parts.length} stored`); }
       plog(`${GEO_NAME[k]}: ${g.recs.length} rows stored for worksite tagging (${secs.length} section(s))`);
     }
-    if (pngs.length || W.pages.length) await runTRC(pngs, trcFiles, W.pages);
+    if (pngs.length || W.pages.length) await runTRC(pngs, trcFiles.filter(tf => tf.trc), W.pages);
     plog('Recalculating KPIs and jobs…'); const rr = await call('refresh'); plog('Done: ' + Object.entries(rr).filter(([k]) => /^K|tracker/.test(k)).map(([k, v]) => `${k} ${typeof v === 'object' ? `+${v.inserted}/~${v.updated}/-${v.closed}` : v}`).join(' · '));
     plog(`Finished in ${Math.round((Date.now() - t0) / 1000)} s.`); toast('Upload complete'); collectDone(true); U.files = []; SH.list.filter(x => x.checked).forEach(x => URL.revokeObjectURL(x.url)); SH.list = SH.list.filter(x => !x.checked && x.status !== 'done'); drawShots(); drawQueue(); await T.reload();
   } catch (e) { plog('ERROR: ' + (e.error || e.message || e)); collectDone(false); fail(e); }
-  U.running = false; const b = $('btnGo'); if (b) b.disabled = false;
 }
 // km list -> "2-44,46,50-52" (which km a line's latest data covers; jobs outside it are not closed by this run)
 function kmRanges(kms) { const a = [...new Set(kms || [])].sort((x, y) => x - y); const out = []; for (let i = 0; i < a.length; i++) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(i === j ? '' + a[i] : a[i] + '-' + a[j]); i = j; } return out.join(','); }
@@ -593,7 +604,7 @@ async function startCollected(m) {
   while (unread() && Date.now() - t0 < 3600e3) { await new Promise(r => setTimeout(r, 1000)); if (Date.now() - said > 30e3) { said = Date.now(); const docs = U.files.filter(f => !/\.png$/i.test(f.name)).length; plog(`  checking report files on this computer – ${docs - unread()} of ${docs} done…`); } }
   // asset registers this program does not read (from an older collector) are skipped quietly instead of stopping the upload
   // only registers TMS Control really does not read are skipped quietly; an unread weld / fish plate / curve … register is a problem
-  for (const f of U.files) if (f.__collector && f.__info && !f.__info.ok && /^AssetRegister_(RAIL|FASTENING|SLEEPER|RAIL_PAD|LINER|Welding_Team|LAND_BOUNDARY|DRAINAGE|EROSION|FORMATION|PROTECTION|WEAK|TUNNEL|TRACK_TYPE|BUFFER|SAND_HUMP|Steel_Channel)/i.test(f.name)) { f.__info.unused = true; f.__info.lines = ['Asset register not used by TMS Control – skipped']; }
+  for (const f of U.files) if (f.__collector && f.__info && !f.__info.ok && UNUSED_REG.test(f.name)) { f.__info.unused = true; f.__info.lines = ['Asset register not used by TMS Control – skipped']; }
   drawQueue();
   const bad = U.files.filter(f => f.__info && !f.__info.ok && !f.__info.unused).length;
   if (W.auto && !bad && !SH.list.length) { plog('Everything recognised – uploading.'); runUpload(); }
