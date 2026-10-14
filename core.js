@@ -1143,6 +1143,16 @@ function analyse(store, opts = {}) {
     const runs = [...new Set(ps.map(p => p.date))].sort();
     const run = runs[runs.length - 1], prev = runs.length > 1 ? runs[runs.length - 2] : null;
     const L = analyseLine(store, section, line, ps.filter(p => p.date === run), run);
+    // jobs come from the latest run that recorded each km (laser or contact): km the latest run did not record keep
+    // the newest earlier run's findings, labelled with that run
+    const latestKm = new Set(ps.filter(p => p.date === run).map(p => p.km)); const best = new Map();
+    for (const p of ps.filter(p => p.date !== run && !latestKm.has(p.km)).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.part || 0) - (a.part || 0)))) if (!best.has(p.km)) best.set(p.km, p);
+    if (best.size) {
+      const CL = analyseLine(store, section, line, [...ps.filter(p => p.date === run), ...best.values()], run);
+      L.todo = CL.todo.map(t => { const o = best.get(t.km ?? Math.floor((t.pos || 0) / 1000)); return o ? Object.assign(t, { run: o.date, olderRun: true }) : t; });
+    }
+    L.summary.kms = [...new Set([...latestKm, ...best.keys()])].sort((a, b) => a - b);
+    L.summary.sensor = mode(ps.filter(p => p.date === run).map(p => p.sensor).filter(Boolean)) || null;
     if (prev) {
       const P = analyseLine(store, section, line, ps.filter(p => p.date === prev), prev, true);
       const pm = new Map(P.blocks.map(b => [b.km + ':' + b.block, b]));
@@ -1169,7 +1179,8 @@ function analyseLine(store, section, line, pagesIn, run, light = false) {
   const lineId = `${sectionCode(section)} ${lineDisplay(line)}`;
   // one page per km
   const seen = new Set(), pages = [];
-  for (const p of pagesIn.sort((a, b) => a.km - b.km)) { if (!seen.has(p.km)) { seen.add(p.km); pages.push(p); } }
+  // a run entered in parts may hold the same km twice: the later upload (higher TMS run id) wins
+  for (const p of pagesIn.sort((a, b) => a.km - b.km || (b.part || 0) - (a.part || 0))) { if (!seen.has(p.km)) { seen.add(p.km); pages.push(p); } }
   const speed = mode(pages.map(p => p.speed).filter(Boolean)) || 110; const B = band(speed);
   const src = k => byLine(store[k], section, line);
   const curves = src('curve'), fps = src('fpJoint'), gjs = src('glued'), lcs = src('lc'), sejs = src('sej');
@@ -2236,7 +2247,7 @@ __m['tmshtml.js'] = (function(){
 // TMS web pages as data (no screenshots): a small HTML table reader that works without a browser DOM,
 // and converters from the TMS Collector's page tables to the records the uploader already understands.
 const {sectionName, lineKey} = __m['names.js'];
-const {PARAMS} = __m['page.js'];
+const {PARAMS, BLKCOLS, DISTCOLS} = __m['page.js'];
 
 const {decode, htmlTables, htmlText, htmlTitle} = __m['tmstable.js'];
 
@@ -2260,15 +2271,31 @@ function trcPageFromTables(tables, file = 'TRC page') {
     const k = /(\d+)\s*TO\s*(\d+)/i.exec(v(/^KM\s*:/i)); if (k) { out.km = +k[1]; out.kmTo = +k[2]; }
     const sp = /^(\d{2,3})$/.exec(v(/^SECTIONAL SPEED/i)); if (sp) out.speed = +sp[1];
   }
-  let mode = '';
+  // laser and contact pages differ: contact has TW1 in the blocks, no RIV2/RIL2/MI-G, and no GAUGE in the peak distribution.
+  // Columns are taken by their headings and put in the laser order the analysis uses.
+  out.sensor = /CONTACT SENSOR/i.test(title) ? 'contact' : /LASER/i.test(title) ? 'laser' : null;
+  const ALIAS = { RIV: 'RIV1', RIL: 'RIL1', 'MI-G': 'MI_G' };
+  let mode = '', bh = null, dh = null;
   for (const t of tables) for (const r of t) {
     const a = String(r[0] || '').trim(), j = r.join(' ');
     if (/PEAK DISTRIBUTION/i.test(j)) { mode = 'dist'; continue; }
     if (/PEAK WORST THAN UML|PEAK WORSE THAN UML/i.test(j)) { mode = 'uml'; continue; }
     if (/PEAK INFORMATION/i.test(j)) { mode = 'peak'; continue; }
     const tq = /KM Wise TQIC\s*-?\s*(-?\d+(?:\.\d+)?)/i.exec(j); if (tq) { out.kmTqic = +tq[1]; continue; }
-    if (/^Blk\s*\d/i.test(a)) { const row = r.slice(0, 24); while (row.length < 24) row.push(''); out.blocks.push(row.map(c => String(c).trim())); continue; }
-    if (mode === 'dist' && (a === 'CBML' || a === 'UML')) { const v = r.slice(1, 14).map(c => String(c).trim()); while (v.length < 13) v.push(''); out.dist[a] = v; continue; }
+    if (a === 'LOC' && r.some(c => /^UN1L$/i.test(String(c).trim()))) { bh = r.slice(1).map(c => { const h = String(c).trim().toUpperCase(); return ALIAS[h] || h; }); continue; }
+    if (a === 'BAND' && mode === 'dist') { let n = 0; dh = r.slice(1).map(c => { const h = String(c).trim().toUpperCase(); return h === 'BAND' ? (n++ ? 'BAND3' : 'BAND2') : h; }); continue; }
+    if (/^Blk\s*\d/i.test(a)) {
+      let row;
+      if (bh) row = [a, ...BLKCOLS.map(c => { const i = bh.indexOf(c); return i >= 0 ? String(r[i + 1] ?? '').trim() : ''; })];
+      else { row = r.slice(0, 24).map(c => String(c).trim()); while (row.length < 24) row.push(''); }
+      if (out.sensor === 'contact') row[1 + BLKCOLS.indexOf('AVG')] = '';   // contact "AVG" is not the laser mean gauge – not used
+      out.blocks.push(row); continue;
+    }
+    if (mode === 'dist' && (a === 'CBML' || a === 'UML')) {
+      let v; if (dh) v = DISTCOLS.map(c => { const i = dh.indexOf(c); return i >= 0 ? String(r[i + 1] ?? '').trim() : ''; });
+      else { v = r.slice(1, 14).map(c => String(c).trim()); while (v.length < 13) v.push(''); }
+      out.dist[a] = v; continue;
+    }
     if ((mode === 'peak' || mode === 'uml') && PARAMS.includes(a)) { const v = r.slice(1, 21).map(c => String(c).trim()); while (v.length < 20) v.push(''); if (mode === 'peak') out.peaks[a] = v; else if (v.some(Boolean)) out.uml.push([a, ...v]); }
   }
   if (!out.section || !out.line) out.problems.push('section/line not found on the page');

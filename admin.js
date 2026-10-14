@@ -276,6 +276,8 @@ async function runUpload() {
   } catch (e) { plog('ERROR: ' + (e.error || e.message || e)); collectDone(false); fail(e); }
   U.running = false; const b = $('btnGo'); if (b) b.disabled = false;
 }
+// km list -> "2-44,46,50-52" (which km a line's latest data covers; jobs outside it are not closed by this run)
+function kmRanges(kms) { const a = [...new Set(kms || [])].sort((x, y) => x - y); const out = []; for (let i = 0; i < a.length; i++) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(i === j ? '' + a[i] : a[i] + '-' + a[j]); i = j; } return out.join(','); }
 async function runTRC(pngs, trcFiles, webPages = []) {
   if (pngs.length) plog(`Reading ${pngs.length} TRC page(s)… (pages read before are remembered)`);
   const store = await C.ingest(engine, trcFiles, () => {});
@@ -288,10 +290,10 @@ async function runTRC(pngs, trcFiles, webPages = []) {
   const R = C.analyse(store);
   if (!R.lines.length) { plog('  No TRC lines found in the pages.'); return; }
   const lineOf = Object.fromEntries(R.lines.map(l => [l.lineId, l]));
-  const lines = R.lines.map(l => ({ lineId: l.lineId, section: l.section, line: l.line, run: l.run, speed: l.speed, blocks: l.blocks, cbml: l.cbml, tmsN: l.tmsN, pml: l.pml, umlPeaks: l.umlPeaks, atRisk: l.atRisk }));
+  const lines = R.lines.map(l => ({ lineId: l.lineId, section: l.section, line: l.line, run: l.run, speed: l.speed, blocks: l.blocks, cbml: l.cbml, tmsN: l.tmsN, pml: l.pml, umlPeaks: l.umlPeaks, atRisk: l.atRisk, sensor: l.sensor || '', kms: kmRanges(l.kms) }));
   const blocks = R.blocks.map(b => ({ lineId: b.lineId, section: b.section, line: b.line, run: b.run, km: b.km, block: b.block, irpwm: b.irpwm, MI: b.MI, risk: b.risk, TQIC: b.TQIC }));
   const peaks = R.peaks.map(p => ({ lineId: p.lineId, section: p.section, line: p.line, run: p.run, km: p.km, pos: p.pos, param: p.param, value: p.value, status: p.status }));
-  const todo = R.todo.map(t => { const l = lineOf[t.lineId] || {}; return Object.assign({}, t, { section: l.section, line: l.line, run: l.run }); });
+  const todo = R.todo.map(t => { const l = lineOf[t.lineId] || {}; return Object.assign({}, t, { section: l.section, line: l.line, run: t.run || l.run }); });   // a km the latest run did not record keeps its earlier run
   plog(`  TRC: ${lines.length} line(s), ${blocks.length} blocks, ${todo.length} jobs – uploading…`);
   const id = upid(); const bc = chunk(blocks, 3000), pc = chunk(peaks, 3000);
   for (let i = 0; i < Math.max(bc.length, pc.length); i++) await call('ingestTRC', { uploadId: id, blocks: bc[i] || [], peaks: pc[i] || [], final: false });
@@ -563,7 +565,7 @@ async function addCollected(items) {
   for (const it of items) {
     try {
       if (it.type === 'file') { files.push(new File([it.bytes], it.name)); continue; }
-      if (it.type === 'trc') { const p = C.trcPageFromTables(it.tables, it.name); if (p.blocks.length || Object.keys(p.peaks).length) W.pages.push(p); else W.notes.push(`${it.name}: not a TRC result page – skipped`); continue; }
+      if (it.type === 'trc') { const p = C.trcPageFromTables(it.tables, it.name); if (it.meta) { if (it.meta.part) p.part = +it.meta.part; if (it.meta.sensor && !p.sensor) p.sensor = it.meta.sensor; } if (p.blocks.length || Object.keys(p.peaks).length) W.pages.push(p); else W.notes.push(`${it.name}: not a TRC result page – skipped`); continue; }
       if (it.type === 'paste') { const tp = C.tablesFromPaste(stripScripts(it.html), ''); const k = C.classifyPaste(tp.title); const r = k ? C.parsePaste(k, tp) : null; if (r) { r.file = it.name; W.sets.push(r); } else W.notes.push(`${it.name}: page not recognised – skipped`); continue; }
       if (it.type === 'usfd') { const r = C.usfdDefectsFromPage(it.html); if (r.section && r.line) { W.usfd.push(...r.records); W.usfdLines.push(r.section + '|' + r.line); } else W.notes.push(`${it.name}: section / line not found – skipped`); continue; }
       if (it.type === 'usfdHist') { hist.push(...C.usfdHistFromPage(it.html, it.meta || {})); continue; }

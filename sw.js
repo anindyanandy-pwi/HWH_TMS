@@ -1,5 +1,5 @@
 // Keeps the app on the phone so it opens without signal. Data calls (POST to the server) are never cached here.
-const VERSION = '202610131414';
+const VERSION = '202610131934';
 const SHELL = ["./","index.html","styles.css","config.js","store.js","stations.js","app.js","field.js","admin.js","core.js","models.json","shotmodel.json","manifest.webmanifest","icons/icon-192.png","icons/icon-512.png"];
 self.addEventListener('install', e => { e.waitUntil(caches.open('tmsc-' + VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== 'tmsc-' + VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
