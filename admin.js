@@ -97,10 +97,10 @@ function drawQueue() {
   const sh = SH.list.filter(x => x.status === 'done'), un = sh.filter(x => !x.checked).length;
   const web = W.sets.length + W.pages.length + W.usfd.length;
   if (!U.files.length && !sh.length && !web) { q.innerHTML = '<div class="muted">Nothing selected yet.</div>'; return; }
-  const bad = docs.filter(f => f.__info && !f.__info.ok).length;
+  const bad = docs.filter(f => f.__info && !f.__info.ok && !f.__info.unused).length;
   // every report file is opened on this computer as soon as it is picked, so it is clear what will be taken from it before anything is uploaded
   q.innerHTML = `<div>${docs.length} report file(s), ${png} TRC page(s)${sh.length ? `, ${sh.length} screenshot(s)${un ? ` – <span class="od">${un} not checked yet</span>` : ' – checked'}` : ''}${bad ? ` · <span class="od">${bad} file(s) not recognised – they will be skipped</span>` : ''}</div>
-    ${web ? webQueueHtml() : ''}${docs.length ? `<table class="t fileq"><tbody>${docs.map(f => `<tr class="${f.__info && !f.__info.ok ? 'dbt' : ''}"><td class="small wrap">${esc(f.name)}</td><td class="small wrap">${f.__info ? f.__info.lines.map(l => esc(l)).join('<br>') : '<span class="muted">opening…</span>'}</td></tr>`).join('')}</tbody></table>` : ''}`;
+    ${web ? webQueueHtml() : ''}${docs.length ? `<table class="t fileq"><tbody>${docs.map(f => `<tr class="${f.__info && !f.__info.ok && !f.__info.unused ? 'dbt' : ''}"><td class="small wrap">${esc(f.name)}</td><td class="small wrap">${f.__info ? f.__info.lines.map(l => esc(l)).join('<br>') : '<span class="muted">opening…</span>'}</td></tr>`).join('')}</tbody></table>` : ''}`;
 }
 // what the upload will take from one report file (read here, nothing is sent)
 async function inspectFile(f) {
@@ -564,7 +564,7 @@ async function addCollected(items) {
   const files = []; const hist = [];
   for (const it of items) {
     try {
-      if (it.type === 'file') { files.push(new File([it.bytes], it.name)); continue; }
+      if (it.type === 'file') { const f = new File([it.bytes], it.name); f.__collector = true; files.push(f); continue; }
       if (it.type === 'trc') { const p = C.trcPageFromTables(it.tables, it.name); if (it.meta) { if (it.meta.part) p.part = +it.meta.part; if (it.meta.sensor && !p.sensor) p.sensor = it.meta.sensor; } if (p.blocks.length || Object.keys(p.peaks).length) W.pages.push(p); else W.notes.push(`${it.name}: not a TRC result page – skipped`); continue; }
       if (it.type === 'paste') { const tp = C.tablesFromPaste(stripScripts(it.html), ''); const k = C.classifyPaste(tp.title); const r = k ? C.parsePaste(k, tp) : null; if (r) { r.file = it.name; W.sets.push(r); } else W.notes.push(`${it.name}: page not recognised – skipped`); continue; }
       if (it.type === 'usfd') { const r = C.usfdDefectsFromPage(it.html); if (r.section && r.line) { W.usfd.push(...r.records); W.usfdLines.push(r.section + '|' + r.line); } else W.notes.push(`${it.name}: section / line not found – skipped`); continue; }
@@ -588,9 +588,13 @@ async function startCollected(m) {
   if (S.view !== 'upload') { S.view = 'upload'; T.render(); await new Promise(r => setTimeout(r, 300)); }
   plog(`TMS Collector: ${m.items.length} item(s) received (run ${m.runId})`);
   await addCollected(m.items);
-  // wait until every report file has been opened and checked on this computer
-  for (let i = 0; i < 600 && U.files.some(f => !/\.png$/i.test(f.name) && !f.__info); i++) await new Promise(r => setTimeout(r, 500));
-  const bad = U.files.filter(f => f.__info && !f.__info.ok).length;
+  // wait until every report file has been opened and checked on this computer (a weekly run brings ~100 register files)
+  const unread = () => U.files.filter(f => !/\.png$/i.test(f.name) && !f.__info).length; const t0 = Date.now(); let said = 0;
+  while (unread() && Date.now() - t0 < 3600e3) { await new Promise(r => setTimeout(r, 1000)); if (Date.now() - said > 30e3) { said = Date.now(); const docs = U.files.filter(f => !/\.png$/i.test(f.name)).length; plog(`  checking report files on this computer – ${docs - unread()} of ${docs} done…`); } }
+  // asset registers this program does not read (from an older collector) are skipped quietly instead of stopping the upload
+  for (const f of U.files) if (f.__collector && f.__info && !f.__info.ok && /^AssetRegister_/i.test(f.name)) { f.__info.unused = true; f.__info.lines = ['Asset register not used by TMS Control – skipped']; }
+  drawQueue();
+  const bad = U.files.filter(f => f.__info && !f.__info.ok && !f.__info.unused).length;
   if (W.auto && !bad && !SH.list.length) { plog('Everything recognised – uploading.'); runUpload(); }
   else { const why = bad ? `${bad} file(s) not recognised` : SH.list.length ? 'screenshots in the list need checking' : 'automatic upload is off'; plog(`Check the list and click "Upload and recalculate" (${why}).`); toast('Collected reports are ready to upload – check the list', !!bad); window.postMessage({ __tmsc: 'waiting', runId: m.runId, why }, location.origin); }
 }
