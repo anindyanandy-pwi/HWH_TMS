@@ -308,7 +308,7 @@ function readingsTable(sh, pre, post, Lm, job, all) {
 }
 
 // ---------- location history (earlier work and TRC / OMS results at the same place) ----------
-const INSP_NAME = { CURVE: 'Curve', PXING: 'P&C', DIAMOND: 'Diamond crossing', LC: 'Level crossing', LWR: 'LWR movement', BALLAST: 'Ballast', RAIL: 'Rail', SLEEPER: 'Sleeper' };
+const INSP_NAME = { OTHER: 'Other inspection', USFD: 'USFD machine & work', PXING_JOINT: 'Joint P&C (with S&T)', GENERIC: 'Inspection', CURVE: 'Curve', PXING: 'P&C', DIAMOND: 'Diamond crossing', LC: 'Level crossing', LWR: 'LWR movement', BALLAST: 'Ballast', RAIL: 'Rail', SLEEPER: 'Sleeper' };
 async function history(q, job) { F.histQ = q; F.histJob = job || null; S.view = 'history'; T.render(); }
 V.history = async el => {
   el.innerHTML = '<div class="empty">Loading location history…</div>';

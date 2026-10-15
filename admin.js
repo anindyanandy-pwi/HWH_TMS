@@ -154,7 +154,9 @@ async function inspectFile(f) {
 function regText(pages, R) {
   const fk = C.formKind(pages); const types = [...new Set(R.map(r => r.type))];
   const nm = types.length ? types.map(t => C.FORM_NAME[t] || { FP: 'Foot plate', RV: 'Rear vehicle', FOOT: 'On foot', TROLLEY: 'Trolley' }[t] || t).join(' + ') : (C.FORM_NAME[fk] || 'Inspection');
-  return R.length ? `${nm} register – ${R.length} inspection(s)` : `${nm} – no filled-in inspections in this file (blank form?) – will be skipped`;
+  // report-engine chat (issue 12b): every inspection counts for K16 field days; FP / RV also for K2, on foot / trolley for K3
+  const use = types.some(t => t === 'FP' || t === 'RV') ? 'K2 and field days' : types.some(t => t === 'FOOT' || t === 'TROLLEY') ? 'K3 and field days' : 'field days';
+  return R.length ? `${nm} register – ${R.length} inspection(s) (counted for ${use})` : `${nm} – no filled-in inspections in this file (blank form?) – will be skipped`;
 }
 // a ZIP is opened here and the reports inside are added one by one
 async function fromZip(f) {

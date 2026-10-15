@@ -1861,6 +1861,8 @@ function finalize(r) {
 // ---------- asset inspection registers (TMS): curve, P&C, diamond, LC, LWR, ballast, rail, sleeper ----------
 // One record per inspection (an asset or stretch, a date, who). Kept as inspection history; readings are not used yet.
 const FORMS = [
+  ['PXING_JOINT', /^JOINT INSPECTION OF POINTS AND CROSSINGS?/i],
+  ['USFD', /INSPECTION OF USFD MACHINE AND WORK/i],
   ['PXING_INT', /PROFORMA FOR INTERMEDIATE INSPECTION OF POINTS/i],
   ['PXING', /PROFORMA FOR INSPECTION OF POINTS AND CROSSING/i],
   ['CURVE', /^CURVE INSPECTION REGISTER/i],
@@ -1870,10 +1872,20 @@ const FORMS = [
   ['RAIL', /^RAIL INSPECTION REGISTER/i],
   ['SLEEPER', /^SLEEPER INSPECTION REGISTER/i]
 ];
-const FORM_NAME = { CURVE: 'Curve inspection', PXING: 'P&C inspection', DIAMOND: 'Diamond crossing inspection', PXING_INT: 'Intermediate P&C inspection', LC: 'Level crossing inspection', LWR: 'LWR movement chart', BALLAST: 'Ballast inspection', RAIL: 'Rail inspection', SLEEPER: 'Sleeper inspection' };
+const FORM_NAME = { OTHER: 'Other inspections', USFD: 'USFD machine & work inspection', PXING_JOINT: 'Joint P&C inspection (with S&T)', GENERIC: 'Inspection', CURVE: 'Curve inspection', PXING: 'P&C inspection', DIAMOND: 'Diamond crossing inspection', PXING_INT: 'Intermediate P&C inspection', LC: 'Level crossing inspection', LWR: 'LWR movement chart', BALLAST: 'Ballast inspection', RAIL: 'Rail inspection', SLEEPER: 'Sleeper inspection' };
 const txt = r => r.cells.map(c => c.txt.trim()).filter(Boolean);
+// "Other Inspections" (AT welding at site, yard line, night, gang, TR/DS site, monsoon patrolling, office & store …): a title line,
+// then "Inspecting Official : name (designation)" and "Inspection Date : dd/mm/yyyy" on one row
+const isOtherHead = r => { const t = txt(r); return t.some(x => /^Inspecting Official$/i.test(x)) && t.some(x => /^Inspection Date$/i.test(x)); };
+// any other register page: a date label and an official (general fallback, so a new feature type is not lost)
+const DATE_LBL = /^(Inspection Date|Date of Inspection|Inspected on|Date)\s*:?\s*(\d\d\/\d\d\/\d{4})?/i;
+const WHO_LBL = /^(Inspecting Official|Inspected By|Inspection Authority|Machine Inspected By|Inspecting Officer|Name of Inspecting Official)\b/i;
+function genericPage(pg) { const t = pg.map(r => txt(r).join(' | ')).join('\n'); return /(Inspection Date|Date of Inspection)/i.test(t) && /(Inspecting Official|Inspected By|Inspection Authority|Inspecting Officer|Signature of PWI)/i.test(t) && D.test(t); }
 function formKind(pages) {
   for (const pg of pages.slice(0, 2)) for (const r of pg.slice(0, 4)) for (const c of r.cells) { const t = c.txt.trim(); for (const [k, re] of FORMS) if (re.test(t)) return k; }
+  if (pages.slice(0, 2).some(pg => pg.slice(0, 3).some(r => r.cells.some(c => TITLE.test(c.txt))))) return null;   // FP / RV / on foot / trolley register
+  if (pages.slice(0, 2).some(pg => pg.slice(0, 8).some(isOtherHead))) return 'OTHER';
+  if (pages.slice(0, 3).some(genericPage)) return 'GENERIC';
   return null;
 }
 const D = /(\d\d)\/(\d\d)\/(\d{4})/;
@@ -1904,7 +1916,13 @@ function rec(type, f) {
   return r;
 }
 function parseForms(pages, kind) {
+  if (kind === 'GENERIC') { const out = []; pages.forEach(pg => { if (!genericPage(pg)) return; try { out.push(...P.GENERIC(pg)); } catch (e) { } }); const seen = new Set(); return out.filter(r => r.date && !seen.has(r.key) && seen.add(r.key)); }
   const all = []; pages.forEach(pg => pg.forEach(r => all.push(r)));
+  if (kind === 'OTHER') {   // one record per titled block
+    const out = []; const heads = []; all.forEach((r, i) => { if (isOtherHead(r)) heads.push(i); });
+    heads.forEach((h, n) => { const rows = all.slice(Math.max(0, h - 1), n + 1 < heads.length ? heads[n + 1] - 1 : all.length); try { out.push(...P.OTHER(rows)); } catch (e) { } });
+    const seen = new Set(); return out.filter(r => r.date && !seen.has(r.key) && seen.add(r.key));
+  }
   const re = FORMS.find(f => f[0] === kind)[1];
   const starts = []; all.forEach((r, i) => { if (r.cells.some(c => re.test(c.txt.trim()))) starts.push(i); });
   const out = [];
@@ -1966,7 +1984,49 @@ const P = {
       const k1 = at(80, 130), m1 = at(130, 180), k2 = at(180, 230), m2 = at(230, 280); if (k1 == null) return; lines.add(cs[0].txt.trim()); kms.push(k1 + (m1 || 0) / 1000); if (k2 != null) kms.push(k2 + (m2 || 0) / 1000); });
     return [rec('SLEEPER', { route: field(rows, /^Section\s*:?/i), line: [...lines].join(', '), kmA: kms.length ? Math.min(...kms) : null, kmB: kms.length ? Math.max(...kms) : null, date, official: m ? m[1] : off, desig: m ? m[2] : '' })];
   },
-  PXING_INT() { return []; }   // sample seen so far is a blank form; a filled sample is needed to read it
+  PXING_INT() { return []; },
+  // 97 Other Inspections: title row, then the official "name (designation)" / date row, Route or Station, Location or Line
+  OTHER(rows) {
+    const h = rows.findIndex(isOtherHead); if (h < 0) return [];
+    const title = h > 0 ? txt(rows[h - 1]).join(' ') : ''; const head = rows[h].cells.filter(c => c.txt.trim());
+    const val = re => { const i = head.findIndex(c => re.test(c.txt.trim())); return i >= 0 && head[i + 1] ? clean(head[i + 1].txt) : ''; };
+    let off = val(/^Inspecting Official$/i); const date = dmy(val(/^Inspection Date$/i)); if (!date) return [];
+    // the designation often wraps onto the next row(s) under the name: "(SSE/P.WAY/BWN(W))", or ")" alone
+    for (let k = h + 1; k < Math.min(rows.length, h + 3) && !/\(.+\)\s*$/.test(off); k++) { const cs = rows[k].cells.filter(c => c.txt.trim() && c.x > 90 && c.x < 290); if (!cs.length || rows[k].cells.some(c => c.txt.trim() && c.x < 90)) break; off = (off + ' ' + cs.map(c => c.txt.trim()).join(' ')).replace(/\s+/g, ' ').trim(); }
+    const m = off.match(/^(.*?)\s*\((.+)\)\s*$/);
+    const top = rows.slice(h, h + 4);
+    const loc = field(top, /^Location\s*:?$/i); const kms = [...loc.matchAll(/(-?\d+)\s*km\s*(\d+)\s*m/gi)].map(x => +x[1] + +x[2] / 1000);
+    return [rec('OTHER', { subType: /^[A-Za-z][A-Za-z &/().,-]{3,80}$/.test(title) ? title : 'Other inspection', route: field(top, /^Route\s*:?$/i) || field(top, /^Station\s*:?$/i), line: field(top, /^Line(\/Loop Line)?\s*:?$/i), kmA: kms.length ? Math.min(...kms) : null, kmB: kms.length ? Math.max(...kms) : null, date, official: m ? m[1] : off, desig: m ? m[2] : '', entry: dmy(field(top, /^Entry Date\s*:?$/i)) })];
+  },
+  // 99 Of USFD Work: "INSPECTION OF USFD MACHINE AND WORK OF PWI(USFD)"
+  USFD(rows) {
+    const date = dmy(field(rows, /^Date of Inspection\s*:?/i)); if (!date) return [];
+    const from = kmOf(field(rows, /^Location From\s*:?/i)), to = kmOf(field(rows, /^Location To\s*:?/i));
+    return [rec('USFD', { subType: 'USFD machine & work', route: field(rows, /^Section\/Station\s*:?/i), line: field(rows, /^Line\/Loopline\/Xover\s*:?/i), kmA: from, kmB: to ?? from, date, official: field(rows, /^Machine Inspected By\s*:?/i), desig: field(rows, /^Designation\s*:?/i) })];
+  },
+  // 28 Points & Crossing (Joint) – joint inspection with S&T; the P-Way official signs on the right ("Signature of PWI with Date")
+  PXING_JOINT(rows) {
+    const date = dmy(field(rows, /^Date of Inspection\s*:?/i)); if (!date) return [];
+    const no = field(rows, /^Point No\.?\s*:?/i), station = field(rows, /^Operating Station\s*:?/i), at = kmOf(field(rows, /^Location\s*:?$/i) || field(rows, /^Location\s*:/i));
+    let official = '', desig = '';
+    const k = rows.findIndex(r => r.cells.some(c => /Signature of PWI/i.test(c.txt)));
+    if (k >= 0) { const x0 = rows[k].cells.find(c => /Signature of PWI/i.test(c.txt)).x - 60;
+      for (const r of rows.slice(k + 1, k + 8)) for (const c of r.cells) { if (c.x < x0) continue; const t = clean(c.txt); if (!t) continue; const m = t.match(/^\((.+)\)$/); if (m) { if (!desig) desig = m[1]; } else if (!official && !desig) official = t; } }
+    return [rec('PXING_JOINT', { asset: 'Point ' + no, subType: 'Joint P&C, point ' + no + (station ? ' (' + station + ')' : ''), station, route: field(rows, /^Section\/Station\s*:?/i), line: '', kmA: at, date, official, desig, entry: dmy(field(rows, /^Entry Date\s*:?/i)) })];
+  },
+  // general fallback for any other register page
+  GENERIC(pg) {
+    const rows = pg; let date = null, who = '', desig = '';
+    for (const r of rows) { const cs = r.cells.filter(c => c.txt.trim()); for (let i = 0; i < cs.length; i++) { const t = cs[i].txt.trim();
+      if (!date && /^(Inspection Date|Date of Inspection)/i.test(t)) date = dmy(t) || dmy(cs[i + 1] && cs[i + 1].txt);
+      if (!who && WHO_LBL.test(t)) who = clean(t.replace(WHO_LBL, '')) || clean(cs[i + 1] && cs[i + 1].txt);
+      if (!desig && /^Designation\b/i.test(t)) desig = clean(t.replace(/^Designation\s*:?/i, '')) || clean(cs[i + 1] && cs[i + 1].txt); } }
+    if (!date) return [];
+    const m = who.match(/^(.*?)\s*\((.+)\)\s*$/); if (m) { who = m[1]; desig = desig || m[2]; }
+    if (!desig) { const d = rows.map(r => txt(r).join(' ')).find(t => /^\(\s*(SSE|JE|ADEN|AEN|DEN|Sr\.?\s*DEN)[^)]*\)$/i.test(t)); if (d) desig = d.replace(/[()]/g, '').trim(); }
+    const title = (rows.map(r => txt(r).join(' ')).find(t => /[A-Za-z]{4}/.test(t)) || '').slice(0, 80);
+    return [rec('GENERIC', { subType: title, route: field(rows, /^(Section\/Station|Section|Route|Station)\s*:?/i), line: field(rows, /^Line\s*:?/i), kmA: kmOf(field(rows, /^Location( From)?\s*:?/i)) , date, official: who, desig })];
+  }   // sample seen so far is a blank form; a filled sample is needed to read it
 };
 
 
