@@ -904,7 +904,7 @@ const ALIASES = [
   ['Saktigarh-Barddhaman', 'SKG-BWN'], ['Howrah - Santragachi', 'Howrah - SRC', 'HWH-SRC'],
   ['Khana-Sainthia', 'KAN-SNT'], ['Sainthia-Nalhati', 'SNT-NHT'], ['Nalhati-Bonidanga Link', 'NHT-BDAG Link'],
   ['Sheoraphuli Jn-Bishnupur', 'SHE-VSU'], ['Rampurhat - Dumka', 'RPH - DUMK'], ['Naihati Jn-Bandel Jn', 'NH-BDC'],
-  ['Andul-Dankuni', 'ADL-DKAE'], ['Khanna Jn-Andal Jn', 'KAN-UDL'], ['Liluah-Belur Math', 'LLH-BRMH'],
+  ['Andul-Dankuni', 'ADL-DKAE'], ['Khanna Jn-Andal Jn', 'KAN-UDL', 'Khana Jn-Andal Jn', 'KHANA-ANDAL'], ['Liluah-Belur Math', 'LLH-BRMH'],
   ['Belanagar- Rajchandrapur', 'BZL - RCD'], ['Rajchandrapur-Bhattanagar', 'RCD-BTNG'], ['Gossaingram-Poradanga', 'GSGB-PRDG'],
   ['Magra-Tribeni Avoiding Line', 'Magra-Tribeni Avoiding line'],
 ];

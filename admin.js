@@ -71,7 +71,7 @@ const errPage = (f, e) => ({ file: f.name, blocks: [], dist: {}, peaks: {}, uml:
 // ---------- upload view ----------
 const U = { files: [], log: [], running: false, dfwrDivision: true };
 const GEO_NAME = { curve: 'Curve register', pxing: 'P&C register', lc: 'LC register', sej: 'SEJ register', glued: 'Glued joint register', diamond: 'Diamond crossing register', bridge: 'Bridge register' };
-const KIND_NAME = { omsPeak: 'OMS peak locations above 0.15 g (km/m)', 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages', usfd: 'USFD rail / weld defects', atWelds: 'AT welds done / defective', usfdHist: 'USFD testing history', weldMonths: 'AT welds done / tested per month (K12)', untested: 'New AT welds not yet tested' };
+const KIND_NAME = { omsPeak: 'OMS peak locations above 0.15 g (km/m)', 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', tmsJurisdiction: 'Jurisdiction as mapped in TMS', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages', usfd: 'USFD rail / weld defects', atWelds: 'AT welds done / defective', usfdHist: 'USFD testing history', weldMonths: 'AT welds done / tested per month (K12)', untested: 'New AT welds not yet tested' };
 V.upload = async el => {
   el.innerHTML = T.pageHead('Upload TMS data', 'Admin – reports come from the TMS Collector; every upload is added to the history, nothing older is overwritten') + `<div class="grid2">
     <div><div class="panel"><div class="panelhead"><span>Ready to upload</span><span class="right"><label class="small"><input type="checkbox" id="dfwrDiv" ${U.dfwrDivision ? 'checked' : ''}> DFWR file covers the whole division</label> <label class="small" title="Normally a report identical to the last upload from this computer is not sent again (faster). Tick to send everything."><input type="checkbox" id="sendAll" ${U.sendAll ? 'checked' : ''}> Send unchanged reports too</label></span></div><div id="queue" style="padding:10px 14px"></div>
@@ -99,7 +99,7 @@ V.upload = async el => {
     const maxDays = w => /daily/i.test(w) ? 2 : /twice a week/i.test(w) ? 4 : /weekly/i.test(w) ? 8 : /monthly/i.test(w) ? 35 : null;
     const age = d => d ? Math.floor((Date.parse(S.B.today) - Date.parse(String(d).slice(0, 10))) / 864e5) : null;
     $('chk').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>Report</th><th>Last arrived</th><th>Records</th></tr></thead><tbody>${st.map(r => {
-      const a = age(r.last), m = maxDays(r.when); const late = r.last && m != null && a > m; const empty = r.last && +r.records === 0 && !/jurisdiction|official|fracture/.test(r.kind);
+      const a = age(r.last), m = maxDays(r.when); const late = r.last && m != null && a > m; const empty = r.last && +r.records === 0 && !/jurisdiction|Jurisdiction|official|fracture/.test(r.kind);
       const cls = !r.last ? 'od' : late || empty ? 'od' : '';
       return `<tr><td class="wrap">${esc(r.what)}<div class="small muted">expected: ${esc(r.when)}</div></td><td class="${cls}" style="min-width:110px">${r.last ? dmy(r.last) + `<div class="small">${a === 0 ? 'today' : a + ' day(s) ago'} · as on ${dmy(r.asOn)}${late ? ' · <b>late</b>' : ''}${/unchanged/.test(r.note || '') ? ' · unchanged' : ''}</div>` : 'never'}</td><td class="n ${empty ? 'od' : ''}">${r.records ?? ''}${empty ? '<div class="small">empty</div>' : ''}</td></tr>`;
     }).join('')}</tbody></table></div>`;
@@ -236,6 +236,7 @@ async function callR(fn, args, opt) {
 }
 const upid = () => 'UP' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const SNAPSHOT = new Set(['lna', 'dfwr', 'og', 'jog', 'untested', 'omsPeak', 'usfd']);   // lists whose missing items are closed
+const OPTIONAL_KIND = new Set(['tmsJurisdiction']);   // newer reports: an older server's "Unknown report type" does not stop the upload
 const PART = { inspections: 1500, assetInsp: 4000, usfd: 3000 };   // records per server call (each call costs ~30–50 s on the server, so few large calls)
 async function send(kind, payload, size) {
   size = size || PART[kind] || 4000;
@@ -248,6 +249,7 @@ async function send(kind, payload, size) {
     if (parts.length > 1) P.sub(`part ${i + 1} of ${parts.length}`);
     const r = await callR('ingest', a, { timeout: 360000 }); P.tick();
     for (const k in tot) tot[k] += r[k] || 0;
+    if (r.lines) tot.lines = r.lines;   // report-engine chat: lines the server wants in the upload log (e.g. jurisdiction comparison)
     if (!last) for (const x of parts[i]) if (x && x.key) seen.push(x.key);
   }
   return tot;
@@ -366,10 +368,17 @@ async function doUpload(t0) {
     for (const s of todo) {
       const name = s.kind === 'inspections' ? 'Inspection registers' : (KIND_NAME[s.kind] || s.kind);
       P.step(name + (s.files > 1 ? ` (${s.files} files)` : '')); const ts = Date.now();
-      const r = await send(s.kind, { records: s.records, scope: s.scope, asOn: s.asOn || S.B.today, file: s.file || name });
+      let r;
+      try { r = await send(s.kind, { records: s.records, scope: s.scope, asOn: s.asOn || S.B.today, file: s.file || name }); }
+      catch (e) {
+        // a report the server does not take yet (its reader is the report engine's part) is noted, not a reason to stop the upload
+        if (OPTIONAL_KIND.has(s.kind) && /Unknown report type/i.test(e.error || e.message || e)) { plog(`${name}: not taken by TMS Control yet (its reader comes with a TMS Control update) – kept for later`); P.tick(Math.max(1, Math.ceil(s.records.length / (PART[s.kind] || 4000)))); continue; }
+        throw e;
+      }
       const n = s.records.length; const sec = Math.round((Date.now() - ts) / 1000);
       if (s.kind === 'inspections') plog(`Inspection registers: ${n} read – ${r.inserted} new, ${n - r.inserted} already in the history (unchanged) [${sec} s]`);
       else plog(`${name}${s.files > 1 ? ` (${s.files} files)` : ''}: ${fmtRes(n, r)} [${sec} s]`);
+      (r.lines || []).forEach(l => plog(l));
       markSent(s.key, s.h);
     }
     for (const x of geoTodo) {
@@ -684,6 +693,18 @@ function webQueueHtml() {
   return `<div class="small" style="margin-top:6px"><b>From the TMS Collector</b></div><table class="t fileq"><tbody>${rows.map(r => `<tr><td class="small wrap">${esc(r[0])}</td><td class="small wrap">${esc(r[1])}</td></tr>`).join('')}</tbody></table>`;
 }
 // items: [{type:'file', name, bytes} | {type:'trc', name, tables} | {type:'paste', name, html} | {type:'usfd', name, html} | {type:'usfdHist', name, html, meta} | {type:'atWelds', name, html, period} | {type:'official', name, html}]
+// jurisdiction as mapped in TMS (collector): one record per stretch of each SSE in-charge / sectional SSE-JE, its stations,
+// and the tree itself (Sr DEN › ADEN › SSE in-charge › sectional SSE/JE). The report engine decides how it is used.
+function jurTmsRecords(it) {
+  const out = []; const k = (...a) => a.map(x => String(x == null ? '' : x)).join('|');
+  for (const u of it.units || []) {
+    const base = { level: u.level, unitId: u.id, unit: u.name, inCharge: u.inCharge, inChargeId: u.inChargeId, srden: u.srden, aen: u.aen };
+    (u.rows || []).forEach((r, i) => out.push(Object.assign({ rowType: 'stretch', key: k('S', u.level, u.id, r.sectionCode || r.section, r.lineCode || r.line, r.fromKm, r.fromM, i) }, base, { section: r.section, sectionCode: r.sectionCode, line: r.line, lineCode: r.lineCode, fromKm: r.fromKm, fromM: r.fromM, toKm: r.toKm, toM: r.toM, lengthKm: r.lengthKm, raw: r.raw })));
+    (u.stations || []).forEach((x, i) => out.push(Object.assign({ rowType: 'station', key: k('T', u.level, u.id, i) }, base, { raw: x })));
+  }
+  for (const n of it.tree || []) out.push({ rowType: 'node', key: k('N', n.level, n.id), level: n.level, unitId: n.id, unit: n.name, parent: n.parent || '' });
+  return out;
+}
 async function addCollected(items) {
   const files = []; const hist = [];
   for (const it of items) {
@@ -694,6 +715,7 @@ async function addCollected(items) {
       if (it.type === 'usfd') { const r = C.usfdDefectsFromPage(it.html); if (r.section && r.line) { W.usfd.push(...r.records); W.usfdLines.push(r.section + '|' + r.line); } else W.notes.push(`${it.name}: section / line not found – skipped`); continue; }
       if (it.type === 'usfdHist') { hist.push(...C.usfdHistFromPage(it.html, it.meta || {})); continue; }
       if (it.type === 'atWelds') { const recs = C.atWeldsFromPage(it.html, it.period); if (recs.length) W.sets.push({ kind: 'atWelds', records: recs, scope: { division: true }, asOn: S.B.today, file: it.name }); continue; }
+      if (it.type === 'jurisdictionTms') { const recs = jurTmsRecords(it); if (recs.some(r => r.rowType === 'stretch')) W.sets.push({ kind: 'tmsJurisdiction', records: recs, scope: { division: true }, asOn: it.asOn || S.B.today, file: it.name }); else W.notes.push(`${it.name}: no jurisdiction rows`); continue; }
       if (it.type === 'official') { const r = C.parseKpiSheet('official', C.rowsFromPage(it.html), ''); if (r && r.records.length && r.records[0].unit) { r.file = it.name; W.sets.push(r); } else W.notes.push(`${it.name}: score page not recognised`); continue; }
     } catch (e) { W.notes.push(`${it.name || it.type}: could not read – ${e.message || e}`); }
   }
@@ -783,7 +805,8 @@ V.settings = async el => {
       <div class="panel body"><h3 class="sec">Sheet backups</h3><p class="small">Every morning at 05:00 a dated copy of the whole Google Sheet is saved in the Drive folder <b>TMS Control backups</b> (copies are never deleted). Google Sheets also keeps every change under File → Version history.</p>
       <p id="bkInfo">${st.backup && st.backup.last ? 'Last copy: <b>' + esc(String(st.backup.last).replace('T', ' ').slice(0, 16)) + '</b>' : 'No copy made yet.'}${st.backup && st.backup.folderUrl ? ` · <a href="${esc(st.backup.folderUrl)}" target="_blank" rel="noopener">Open the backup folder</a>` : ''}</p>
       <div class="row"><button class="btn secondary" id="bkNow">Back up now</button></div></div>
-      <div class="panel body"><h3 class="sec">Clean start of the job lists (one time)</h3><div id="csw"><p class="small">Loading…</p></div></div>`;
+      <div class="panel body"><h3 class="sec">Clean start of the job lists (one time)</h3><div id="csw"><p class="small">Loading…</p></div></div>
+      <div class="panel body"><h3 class="sec">Jurisdiction: TMS compared with the file</h3><div id="jcw">${jurCompareHtml(st.jurCompare)}</div></div>`;
     cleanStartPanel();
     $('saveSet').onclick = async () => {
       const settings = [...document.querySelectorAll('[data-k]')].map(i => ({ Key: i.dataset.k, Value: i.value }));
@@ -794,6 +817,17 @@ V.settings = async el => {
     $('recalc').onclick = async e => { e.target.disabled = true; try { const r = await call('refresh'); toast('Recalculated in ' + r.seconds + ' s'); await T.reload(); } catch (er) { fail(er); } e.target.disabled = false; };
   } catch (e) { fail(e); }
 };
+// jurisdiction as mapped in TMS (collector, weekly) compared with the Jurisdiction Details file – the KPIs still use the file
+function jurCompareHtml(c) {
+  if (!c) return '<p class="small">Not received yet – the TMS Collector sends "Jurisdiction as mapped in TMS" with its weekly reports.</p>';
+  const t = c.totals || {}; const km = m => (m / 1000).toFixed(3); const rng = x => `${km(x.a)}–${km(x.b)}`;
+  const tab = (head, rows) => rows.length ? `<div class="scroll"><table class="t compact"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<p class="small muted">None.</p>';
+  return `<p class="small">Received ${esc(String(c.when).replace('T', ' ').slice(0, 16))}. TMS: <b>${t.tms?.units}</b> SSE in-charge, ${t.tms?.stretches} stretches, ${t.tms?.km} km · file: ${t.file?.units} units, ${t.file?.stretches} rows, ${t.file?.km} km. <b>The KPIs still use the file</b> – nothing is changed until you decide.</p>
+    <h4>In TMS, not in the file (${t.onlyTmsKm} km)</h4>${tab(['Section', 'Line', 'km', 'Unit (TMS)'], (c.onlyTms || []).map(x => [x.section, x.line, rng(x), x.unit]))}
+    <h4>In the file, not in TMS (${t.onlyFileKm} km)</h4>${tab(['Section', 'Line', 'km', 'Unit (file)'], (c.onlyFile || []).map(x => [x.section, x.line, rng(x), x.unit]))}
+    <h4>Different unit (${t.unitDiffKm} km)</h4>${tab(['Section', 'Line', 'km', 'File', 'TMS'], (c.unitDiff || []).map(x => [x.section, x.line, rng(x), x.unit, x.other]))}
+    <h4>Different km at the ends of a unit's stretch (${t.kmDiffKm} km)</h4>${tab(['Unit', 'Section', 'Line', 'km', 'Only in'], (c.kmDiff || []).map(x => [x.unit, x.section, x.line, rng(x), x.side === 'tms' ? 'TMS' : 'file']))}`;
+}
 // one-off clean start (15-Oct-2026): close every job created before 10-10-2026 except TRC jobs; open TMS items come back as fresh jobs
 async function cleanStartPanel() {
   const w = $('csw'); if (!w) return;
