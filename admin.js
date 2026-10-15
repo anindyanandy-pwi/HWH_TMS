@@ -73,8 +73,13 @@ const U = { files: [], log: [], running: false, dfwrDivision: true };
 const GEO_NAME = { curve: 'Curve register', pxing: 'P&C register', lc: 'LC register', sej: 'SEJ register', glued: 'Glued joint register', diamond: 'Diamond crossing register', bridge: 'Bridge register' };
 const KIND_NAME = { omsPeak: 'OMS peak locations above 0.15 g (km/m)', 'geo-curve': 'Curve register (worksite tagging)', 'geo-pxing': 'P&C register (worksite tagging)', 'geo-lc': 'LC register (worksite tagging)', 'geo-sej': 'SEJ register (worksite tagging)', 'geo-glued': 'Glued joint register (worksite tagging)', 'geo-diamond': 'Diamond crossing register (worksite tagging)', 'geo-bridge': 'Bridge register (worksite tagging)', jog: 'Welds needing joggled plates', weldSum: 'AT weld count', fpSum: 'Main-line FP joint count', inspections: 'Inspection register', assetInsp: 'Latest inspection report', lna: 'Locations needing attention', dfwr: 'DFWR analysis', og: 'Overdue oiling & greasing', fracture: 'Fracture analysis', official: 'TMS item-wise score', jurisdiction: 'Jurisdiction details', oms: 'OMS comparative summary', imr: 'IMR testing history', weldReg: 'Weld register', fpReg: 'Fish-plated joint register (joint count for K15)', trc: 'TRC km-wise pages', usfd: 'USFD rail / weld defects', atWelds: 'AT welds done / defective', usfdHist: 'USFD testing history', weldMonths: 'AT welds done / tested per month (K12)', untested: 'New AT welds not yet tested' };
 V.upload = async el => {
-  el.innerHTML = T.pageHead('Upload TMS data', 'Admin – every upload is added to the history; nothing older is overwritten') + `<div class="grid2">
-    <div><div id="drop" class="drop" tabindex="0"><svg class="dropsvg" viewBox="0 0 48 48"><path d="M6 14h14l4 4h18v22H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M24 36V24m-5 5l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+  el.innerHTML = T.pageHead('Upload TMS data', 'Admin – reports come from the TMS Collector; every upload is added to the history, nothing older is overwritten') + `<div class="grid2">
+    <div><div class="panel"><div class="panelhead"><span>Ready to upload</span><span class="right"><label class="small"><input type="checkbox" id="dfwrDiv" ${U.dfwrDivision ? 'checked' : ''}> DFWR file covers the whole division</label> <label class="small" title="Normally a report identical to the last upload from this computer is not sent again (faster). Tick to send everything."><input type="checkbox" id="sendAll" ${U.sendAll ? 'checked' : ''}> Send unchanged reports too</label></span></div><div id="queue" style="padding:10px 14px"></div>
+      <div style="padding:0 14px 14px" class="row"><button id="btnGo" class="btn primary">Upload and recalculate</button><button id="btnClr" class="btn secondary">Clear</button></div></div>
+      <div id="pbar" class="hidden" style="margin:0 0 8px;border:1px solid #c9d1dc;background:#fff;padding:8px 10px"><div style="height:10px;background:#e8ecf2;overflow:hidden"><div class="pfill" style="height:10px;width:0;background:#2b6cb0;transition:width .4s"></div></div><div class="ptxt small" style="margin-top:6px"></div></div>
+      <style>#pbar.bad .pfill{background:#c53030!important}#pbar.ok .pfill{background:#2f855a!important}#pbar.bad .ptxt{color:#c53030;font-weight:600}</style>
+      <div class="plog" id="plog">${esc(U.log.join('\n')) || 'Progress will appear here.'}</div>
+      <details id="manual" style="margin-top:16px"${U.manualOpen ? ' open' : ''}><summary style="cursor:pointer;font-weight:600;padding:6px 0">Manual upload (backup) – files or screenshots, when the TMS Collector cannot fetch a report</summary><div style="margin-top:10px"><div id="drop" class="drop" tabindex="0"><svg class="dropsvg" viewBox="0 0 48 48"><path d="M6 14h14l4 4h18v22H6z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M24 36V24m-5 5l5-5 5 5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       <div class="droptitle">Click <b>Select files</b> and pick the reports</div><div class="dropsub">TMS PDFs, XLS / XLSX reports, TRC km-wise PNG pages, or a ZIP of them. In the file window you can select many files at once (Ctrl+A or Ctrl+click).</div>
       <div class="btnrow"><button id="pkFiles" class="btn primary">Select files</button><button id="pkFolder" class="btn secondary">Select a whole folder</button></div>
       <div class="dropsub small" style="margin-top:10px">Dragging files onto this box also works in Chrome and Edge. If a dragged file opens in a new tab instead, use the buttons.</div>
@@ -83,13 +88,24 @@ V.upload = async el => {
       <div class="panel" style="margin-top:16px"><div class="panelhead"><span>Screenshots of TMS pages</span><span class="muted">IMR testing history, OMS peaks km-wise comparative summary</span></div>
       <div style="padding:12px"><div id="shotPaste" class="pastebox" tabindex="0">Open the TMS page at normal zoom (100%) → press <b>Windows key + Shift + S</b> and drag over the table (include the column headings) → click here → press <b>Ctrl+V</b>.<br><span class="small">Scroll and repeat until every row is captured; rows seen twice are counted once. Saved screenshots (many at once): <button id="pkShots" class="btn ghost sm">Select screenshot files</button> <button id="pkShotDir" class="btn ghost sm">Select a folder of screenshots</button></span></div>
       <input id="inShots" type="file" multiple hidden accept=".png,.jpg,.jpeg"><input id="inShotDir" type="file" webkitdirectory multiple hidden><div id="shotList" style="margin-top:10px"></div></div></div>
-      <div class="panel"><div class="panelhead"><span>Ready to upload</span><span class="right"><label class="small"><input type="checkbox" id="dfwrDiv" ${U.dfwrDivision ? 'checked' : ''}> DFWR file covers the whole division</label></span></div><div id="queue" style="padding:10px 14px"></div>
-      <div style="padding:0 14px 14px" class="row"><button id="btnGo" class="btn primary">Upload and recalculate</button><button id="btnClr" class="btn secondary">Clear</button></div></div>
-      <div class="plog" id="plog">${esc(U.log.join('\n')) || 'Progress will appear here.'}</div></div>
-    <div><div class="panel body"><h3 class="sec">Upload checklist</h3><div id="chk"><div class="empty">Loading…</div></div></div></div></div>`;
+      </div></details></div>
+    <div><div class="panel body"><h3 class="sec">Data from TMS</h3><div class="small muted" style="margin-bottom:8px">When each report last arrived and how many records it had. Red: late or empty.</div><div id="chk"><div class="empty">Loading…</div></div></div></div></div>`;
   wireDrop(); wireShots(); drawQueue();
-  try { const st = await call('dataStatus'); $('chk').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>Report</th><th>How often</th><th>Last upload</th><th>Records</th></tr></thead><tbody>${st.map(r => `<tr><td class="wrap">${esc(r.what)}</td><td class="nw small">${esc(r.when)}</td><td class="nw">${r.last ? dmy(r.last) + `<div class="small">as on ${dmy(r.asOn)}</div>` : '<span class="od">never</span>'}</td><td class="n">${r.records ?? ''}</td></tr>`).join('')}</tbody></table></div>`; } catch (e) { fail(e); }
+  $('manual').ontoggle = () => { U.manualOpen = $('manual').open; };
+  $('sendAll').onchange = e => { U.sendAll = e.target.checked; };
+  try {
+    const st = await call('dataStatus');
+    // late: more than the expected interval since the last upload; empty: 0 records for a list that is never empty division-wide
+    const maxDays = w => /daily/i.test(w) ? 2 : /twice a week/i.test(w) ? 4 : /weekly/i.test(w) ? 8 : /monthly/i.test(w) ? 35 : null;
+    const age = d => d ? Math.floor((Date.parse(S.B.today) - Date.parse(String(d).slice(0, 10))) / 864e5) : null;
+    $('chk').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>Report</th><th>Last arrived</th><th>Records</th></tr></thead><tbody>${st.map(r => {
+      const a = age(r.last), m = maxDays(r.when); const late = r.last && m != null && a > m; const empty = r.last && +r.records === 0 && !/jurisdiction|official|fracture/.test(r.kind);
+      const cls = !r.last ? 'od' : late || empty ? 'od' : '';
+      return `<tr><td class="wrap">${esc(r.what)}<div class="small muted">expected: ${esc(r.when)}</div></td><td class="${cls}" style="min-width:110px">${r.last ? dmy(r.last) + `<div class="small">${a === 0 ? 'today' : a + ' day(s) ago'} · as on ${dmy(r.asOn)}${late ? ' · <b>late</b>' : ''}${/unchanged/.test(r.note || '') ? ' · unchanged' : ''}</div>` : 'never'}</td><td class="n ${empty ? 'od' : ''}">${r.records ?? ''}${empty ? '<div class="small">empty</div>' : ''}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+  } catch (e) { fail(e); }
 };
+function openManual() { const d = $('manual'); if (d && !d.open) { d.open = true; U.manualOpen = true; } }
 function plog(m) { U.log.push(m); const p = $('plog'); if (p) { p.textContent = U.log.join('\n'); p.scrollTop = p.scrollHeight; } if (W.runId) window.postMessage({ __tmsc: 'progress', runId: W.runId, line: String(m).trim() }, location.origin); }
 // asset registers TMS Control does not read (rail, sleeper, fastening … – hundreds of MB per run): never opened, never uploaded
 const UNUSED_REG = /^AssetRegister_(RAIL|FASTENING|SLEEPER|RAIL_PAD|LINER|Welding_Team|LAND_BOUNDARY|DRAINAGE|EROSION|FORMATION|PROTECTION|WEAK|TUNNEL|TRACK_TYPE|BUFFER|SAND_HUMP|Steel_Channel)/i;
@@ -130,6 +146,8 @@ async function inspectFile(f) {
       }
     }
   } catch (e) { lines.push('Could not open: ' + (e.message || e)); }
+  // a weld / fish-plate register fetched by an older collector lacks the columns TMS Control needs: left out, with the remedy
+  if (!ok && /^AssetRegister_(WELD|FISH_PLATE)/i.test(f.name)) { f.__info = { ok: false, unused: true, use, lines: [/WELD/i.test(f.name) ? 'Older weld register without the "Whether joggled" column – left out. Fetch it again with "Asset registers now" in the TMS Collector.' : 'Older fish-plate register without the needed columns – left out. Fetch it again with "Asset registers now" in the TMS Collector.'] }; drawQueue(); return; }
   f.__info = { ok, lines, use }; drawQueue();
 }
 // e.g. "Curve inspection register – 203 inspections"; a blank form says so
@@ -210,35 +228,91 @@ const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.
 // Upload parts are safe to send twice (rows are matched by key), so a part that got no answer is sent again after a pause before giving up.
 async function callR(fn, args, opt) {
   for (let i = 0; ; i++) {
-    try { return await call(fn, args, opt); }
+    try { const r = await call(fn, args, opt); P.calls++; return r; }
     catch (e) { if (!e || !e.offline || i >= 2) throw e; plog(`  (no answer from the server – trying again in ${i ? 30 : 10} s)`); await new Promise(r => setTimeout(r, i ? 30000 : 10000)); }
   }
 }
 const upid = () => 'UP' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-async function send(kind, payload, size = 1500) {
-  const recs = payload.records || []; const id = upid(); const parts = recs.length ? chunk(recs, size) : [[]]; let tot = { inserted: 0, updated: 0, closed: 0 };
-  for (let i = 0; i < parts.length; i++) { const r = await callR('ingest', Object.assign({}, payload, { kind, records: parts[i], uploadId: id, final: i === parts.length - 1, total: recs.length }), { timeout: 330000 }); for (const k in tot) tot[k] += r[k] || 0; }
+const SNAPSHOT = new Set(['lna', 'dfwr', 'og', 'jog', 'untested', 'omsPeak', 'usfd']);   // lists whose missing items are closed
+const PART = { inspections: 1500, assetInsp: 4000, usfd: 3000 };   // records per server call (each call costs ~30–50 s on the server, so few large calls)
+async function send(kind, payload, size) {
+  size = size || PART[kind] || 4000;
+  const recs = payload.records || []; const id = upid(); const parts = recs.length ? chunk(recs, size) : [[]]; let tot = { inserted: 0, updated: 0, unchanged: 0, closed: 0 };
+  const seen = [];
+  for (let i = 0; i < parts.length; i++) {
+    const last = i === parts.length - 1;
+    const a = Object.assign({}, payload, { kind, records: parts[i], uploadId: id, final: last, total: recs.length, parts: parts.length });
+    if (last && parts.length > 1 && SNAPSHOT.has(kind)) a.seen = seen;   // earlier parts' items are not closed by the last part
+    if (parts.length > 1) P.sub(`part ${i + 1} of ${parts.length}`);
+    const r = await callR('ingest', a, { timeout: 360000 }); P.tick();
+    for (const k in tot) tot[k] += r[k] || 0;
+    if (!last) for (const x of parts[i]) if (x && x.key) seen.push(x.key);
+  }
   return tot;
 }
+// ---------- progress bar (whole upload): reading the files ~10 %, then every server call moves it ----------
+const P = { t0: 0, total: 1, done: 0, label: '', subl: '', stepT0: 0, timer: null, calls: 0, times: [], read: 0, lastPost: '' };
+const mmss = ms => { const s = Math.round(ms / 1000); return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + String(s % 60).padStart(2, '0') + ' s'; };
+P.pct = () => Math.min(100, Math.round(10 * P.read + 90 * P.done / Math.max(1, P.total)));
+P.show = () => {
+  const el = $('pbar'); const pct = P.pct();
+  if (el) { el.classList.remove('hidden'); el.querySelector('.pfill').style.width = pct + '%'; el.querySelector('.ptxt').textContent = `${pct} % · ${P.label}${P.subl ? ' – ' + P.subl : ''} · working ${mmss(Date.now() - P.stepT0)} on this step · ${mmss(Date.now() - P.t0)} in all`; }
+  const post = pct + '|' + P.label + '|' + P.subl;
+  if (W.runId && post !== P.lastPost) { P.lastPost = post; window.postMessage({ __tmsc: 'progress', runId: W.runId, line: `${pct} % – ${P.label}${P.subl ? ' (' + P.subl + ')' : ''}` }, location.origin); }
+};
+P.begin = () => { Object.assign(P, { t0: Date.now(), stepT0: Date.now(), total: 1, done: 0, label: 'Reading the report files on this computer', subl: '', calls: 0, times: [], read: 0, lastPost: '' }); const el = $('pbar'); if (el) el.classList.remove('bad', 'ok'); clearInterval(P.timer); P.timer = setInterval(P.show, 1000); P.show(); };
+P.step = label => { if (P.label && P.stepT0) P.times.push([P.label, Date.now() - P.stepT0]); P.label = label; P.subl = ''; P.stepT0 = Date.now(); P.show(); };
+P.sub = t => { P.subl = t; P.show(); };
+P.tick = (n = 1) => { P.done += n; P.show(); };
+P.end = (ok, msg) => {
+  if (P.label && P.stepT0) P.times.push([P.label, Date.now() - P.stepT0]);
+  clearInterval(P.timer); P.timer = null; if (ok) P.done = P.total, P.read = 1;
+  const el = $('pbar'); if (el) { el.classList.add(ok ? 'ok' : 'bad'); el.querySelector('.pfill').style.width = (ok ? 100 : P.pct()) + '%'; el.querySelector('.ptxt').textContent = msg; }
+  if (W.runId) window.postMessage({ __tmsc: 'progress', runId: W.runId, line: msg }, location.origin);
+};
+// ---------- one server call per report type (speed): files of the same report (one per section / SSE) are sent together ----------
+function unionScope(list) {
+  if (list.some(s => s && s.division)) return { division: true };
+  const sections = new Set(), units = new Set(), lines = new Set();
+  for (const s of list) { if (!s) continue; (s.sections || []).forEach(x => x && sections.add(x)); if (s.section) sections.add(s.section); if (s.unit) units.add(s.unit); (s.units || []).forEach(x => units.add(x)); (s.lines || []).forEach(x => lines.add(x)); }
+  const o = {}; if (sections.size) o.sections = [...sections]; if (units.size) o.units = [...units]; if (lines.size) o.lines = [...lines]; return o;
+}
+function mergeSets(sets) {
+  const by = new Map();
+  for (const s of sets) { const g = by.get(s.kind) || []; g.push(s); by.set(s.kind, g); }
+  return [...by.values()].map(g => {
+    if (g.length === 1) return Object.assign({ files: 1 }, g[0]);
+    const asOn = g.map(s => s.asOn).filter(Boolean).sort().pop() || null;
+    const names = g.map(s => s.file).filter(Boolean);
+    return { kind: g[0].kind, records: [].concat(...g.map(s => s.records || [])), scope: unionScope(g.map(s => s.scope)), asOn, files: g.length, file: `${g.length} files: ` + names.slice(0, 6).join(', ') + (names.length > 6 ? ` … (+${names.length - 6})` : '') };
+  });
+}
+// ---------- a report identical to the last one sent from this computer is not sent again (speed) ----------
+const hashOf = str => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
+const SENT_DAYS = 6;   // after this many days a report is sent again even when unchanged
+function sentBefore(key, h) { if (U.sendAll) return false; try { const o = JSON.parse(localStorage.getItem('tmsc.sent.' + key) || 'null'); return !!o && o.h === h && Date.now() - o.at < SENT_DAYS * 864e5; } catch (e) { return false; } }
+function markSent(key, h) { try { localStorage.setItem('tmsc.sent.' + key, JSON.stringify({ h, at: Date.now() })); } catch (e) { } }
+const fmtRes = (n, r, closedTxt = 'closed (no longer in TMS)') => `${n} row(s): ${r.inserted} new, ${r.updated} changed, ${r.unchanged != null ? r.unchanged : Math.max(0, n - r.inserted - r.updated)} unchanged${r.closed ? `, ${r.closed} ${closedTxt}` : ''}`;
 async function runUpload() {
   if (U.running) return;
   const shots = SH.list.filter(x => x.status === 'done');
   if (SH.list.some(x => x.status === 'reading')) { toast('Screenshots are still being read – wait a moment', true); return; }
   const unchecked = shots.filter(x => !x.checked || !x.section || !x.line);
-  if (unchecked.length) { toast(`${unchecked.length} screenshot(s) not checked yet. Click "Check" on each (or remove it with ✕), then upload.`, true); $('shotList').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+  if (unchecked.length) { toast(`${unchecked.length} screenshot(s) not checked yet. Click "Check" on each (or remove it with ✕), then upload.`, true); openManual(); $('shotList').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
   if (!U.files.length && !shots.length && !W.sets.length && !W.pages.length && !W.usfd.length) { toast('Select files first', true); return; }
   U.running = true; $('btnGo').disabled = true; U.log = []; const t0 = Date.now();
-  try { await doUpload(t0); } finally { U.running = false; const b = $('btnGo'); if (b) b.disabled = false; }
+  try { await doUpload(t0); } finally { U.running = false; const b = $('btnGo'); if (b) b.disabled = false; if (P.timer) { clearInterval(P.timer); P.timer = null; } }
 }
 async function doUpload(t0) {
+  P.begin();
   try {
     const pngs = U.files.filter(f => /\.png$/i.test(f.name)); const docs = U.files.filter(f => !/\.png$/i.test(f.name));
     const out = { inspections: [], jurisdiction: null }; const trcFiles = []; const kpiSets = [];
     if (W.runId) for (const n of W.notes) plog('TMS Collector: ' + n);
     plog(`Reading ${docs.length} report file(s) on this computer…`); let fi = 0;
     for (const f of docs) {
-      fi++; await pause(); if (f.__info && f.__info.unused) continue;
-      if (docs.length > 20 && fi % 20 === 0) plog(`  … ${fi} of ${docs.length} file(s) read`);
+      fi++; P.read = fi / Math.max(1, docs.length) * 0.8; await pause(); if (f.__info && f.__info.unused) continue;
+      if (docs.length > 20 && fi % 20 === 0) { plog(`  … ${fi} of ${docs.length} file(s) read`); P.sub(`${fi} of ${docs.length} files`); }
       const buf = await f.arrayBuffer(); const ext = f.name.split('.').pop().toLowerCase(); let used = false;
       try {
         if (ext === 'pdf') {
@@ -262,30 +336,57 @@ async function doUpload(t0) {
     for (const p of shotSets()) { if (p.records.length) kpiSets.push(p); else plog(`${KIND_NAME[p.kind]} (${p.scope.section} ${p.scope.line}): no rows with values`); }
     if (W.sets.length || W.usfd.length) { plog(`From the TMS Collector: ${W.sets.length} report(s)${W.usfd.length ? `, USFD defects of ${W.usfdLines.length} section-line(s)` : ''}${W.pages.length ? `, ${W.pages.length} TRC km page(s)` : ''}`); kpiSets.push(...W.sets.filter(x => x.records.length || x.kind === 'omsPeak')); }
     if (W.usfd.length) { kpiSets.push({ kind: 'usfd', records: W.usfd, scope: { lines: W.usfdLines }, file: 'USFD defects (TMS Collector)' }); const pend = C.pendingIMR(W.usfd); if (pend.length) kpiSets.push({ kind: 'imr', records: pend, scope: {}, file: 'IMRs still in track (TMS Collector)' }); }
-    if (out.jurisdiction) { plog('Uploading jurisdiction…'); await call('ingest', { kind: 'jurisdiction', rows: out.jurisdiction, file: 'Jurisdiction Details' }); }
-    if (out.inspections.length) { const seen = new Set(); const recs = out.inspections.filter(r => !seen.has(r.key) && seen.add(r.key)).map(r => Object.assign({}, r, { defects: undefined })); plog(`Uploading ${recs.length} inspections…`); const r = await send('inspections', { records: recs, file: 'Inspection registers' }, 400); plog(`  ${r.inserted} new inspection(s) added to the history`); }
-    for (const s of kpiSets) {
-      const scope = s.kind === 'dfwr' ? (U.dfwrDivision ? { division: true } : s.scope) : s.scope;
-      const asOn = s.asOn || S.B.today;
-      const r = await send(s.kind, { records: s.records, scope, asOn, file: s.file || KIND_NAME[s.kind] }, s.kind === 'assetInsp' || /Sum$/.test(s.kind) ? 2500 : 1500);
-      plog(`${KIND_NAME[s.kind]}: ${r.inserted} new, ${r.updated} updated${r.closed ? ', ' + r.closed + ' closed (no longer in TMS)' : ''}`);
-    }
-    // asset registers: stored on the server so a worksite can be tagged with its curves, P&C, LC, SEJ… and the measuring points laid out
+    // asset registers for worksite tagging (read here, before the server calls, so the bar knows every call in advance)
     const geo = {}; const geoFiles = trcFiles.filter(tf => tf.geo && /\.xlsx?$/i.test(tf.name)); let gi = 0;
     if (geoFiles.length) plog(`Reading ${geoFiles.length} asset register(s) for worksite tagging…`);
     for (const tf of geoFiles) {
-      const ext = tf.name.split('.').pop().toLowerCase(); await pause(); if (++gi % 10 === 0) plog(`  … ${gi} of ${geoFiles.length}`);
+      const ext = tf.name.split('.').pop().toLowerCase(); await pause(); gi++; P.read = 0.8 + 0.2 * gi / geoFiles.length; if (gi % 10 === 0) { plog(`  … ${gi} of ${geoFiles.length}`); P.sub(`asset registers ${gi} of ${geoFiles.length}`); }
       try { const wb = ext === 'xls' ? C.readXLS(tf.buf) : await C.readXLSX(tf.buf); for (const sh of wb.sheets) { const k = C.classifySheet(sh.rows, sh.name); if (!GEO_NAME[k]) continue; const recs = C.parseSheet(k, sh.rows); const g = geo[k] = geo[k] || { recs: [], files: [] }; g.recs.push(...recs); g.files.push(tf.name); } } catch (e) { /* not a register */ }
     }
-    for (const [k, g] of Object.entries(geo)) {
-      if (!g.recs.length) continue; const secs = [...new Set(g.recs.map(r => r.section).filter(Boolean))]; const parts = chunk(g.recs, 1500);
-      for (let i = 0; i < parts.length; i++) { await callR('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') }, { timeout: 330000 }); if (parts.length > 1) plog(`  ${GEO_NAME[k]}: part ${i + 1} of ${parts.length} stored`); }
-      plog(`${GEO_NAME[k]}: ${g.recs.length} rows stored for worksite tagging (${secs.length} section(s))`);
+    P.read = 1;
+    // ---- plan: one server call per report type (split only by size); identical reports are not sent again ----
+    for (const s of kpiSets) if (s.kind === 'dfwr') s.scope = U.dfwrDivision ? { division: true } : s.scope;
+    const sets = mergeSets(kpiSets); const skipped = []; const todo = [];
+    let insp = null; if (out.inspections.length) { const seen = new Set(); insp = out.inspections.filter(r => !seen.has(r.key) && seen.add(r.key)).map(r => Object.assign({}, r, { defects: undefined })); }
+    const hk = (k, o) => hashOf(JSON.stringify(o));
+    if (insp) { const h = hk('inspections', insp); if (sentBefore('inspections', h)) skipped.push({ kind: 'inspections', file: 'Inspection registers', records: insp.length, scope: {} }); else todo.push({ kind: 'inspections', records: insp, scope: {}, file: 'Inspection registers', h, key: 'inspections' }); }
+    for (const s of sets) { const key = s.kind; const h = hk(key, { scope: s.scope, records: s.records }); if (sentBefore(key, h)) skipped.push({ kind: s.kind, file: s.file, records: s.records.length, scope: s.scope, asOn: s.asOn }); else todo.push(Object.assign({ h, key }, s)); }
+    const geoTodo = []; for (const [k, g] of Object.entries(geo)) { if (!g.recs.length) continue; const h = hk('geo.' + k, g.recs); if (sentBefore('geo.' + k, h)) skipped.push({ kind: 'geo-' + k, file: g.files.join(', '), records: g.recs.length, scope: { sections: [...new Set(g.recs.map(r => r.section).filter(Boolean))] } }); else geoTodo.push({ k, g, h }); }
+    const trcPlan = (pngs.length || W.pages.length) ? 1 : 0;
+    P.total = 1 + (out.jurisdiction ? 1 : 0) + todo.reduce((a, s) => a + Math.max(1, Math.ceil((s.records || []).length / (PART[s.kind] || 4000))), 0) + geoTodo.reduce((a, x) => a + Math.ceil(x.g.recs.length / 1500), 0) + (trcPlan ? Math.max(2, Math.ceil(W.pages.length * 5 / 6000) + 1) : 0) + (skipped.length ? 1 : 0) + 4;   // recalculation counts 4
+    plog(`Server: ${todo.length + geoTodo.length + (out.jurisdiction ? 1 : 0)} report type(s) to send${skipped.length ? `, ${skipped.length} unchanged since the last upload (not sent again)` : ''}${trcPlan ? ', TRC results' : ''}.`);
+    if (skipped.length) plog('  unchanged: ' + skipped.map(x => (KIND_NAME[x.kind] || GEO_NAME[String(x.kind).replace(/^geo-/, '')] || x.kind) + ` (${x.records})`).join(' · '));
+    if (out.jurisdiction) { P.step('Jurisdiction'); await callR('ingest', { kind: 'jurisdiction', rows: out.jurisdiction, file: 'Jurisdiction Details' }, { timeout: 360000 }); P.tick(); plog('Jurisdiction stored.'); }
+    for (const s of todo) {
+      const name = s.kind === 'inspections' ? 'Inspection registers' : (KIND_NAME[s.kind] || s.kind);
+      P.step(name + (s.files > 1 ? ` (${s.files} files)` : '')); const ts = Date.now();
+      const r = await send(s.kind, { records: s.records, scope: s.scope, asOn: s.asOn || S.B.today, file: s.file || name });
+      const n = s.records.length; const sec = Math.round((Date.now() - ts) / 1000);
+      if (s.kind === 'inspections') plog(`Inspection registers: ${n} read – ${r.inserted} new, ${n - r.inserted} already in the history (unchanged) [${sec} s]`);
+      else plog(`${name}${s.files > 1 ? ` (${s.files} files)` : ''}: ${fmtRes(n, r)} [${sec} s]`);
+      markSent(s.key, s.h);
     }
-    if (pngs.length || W.pages.length) await runTRC(pngs, trcFiles.filter(tf => tf.trc), W.pages);
-    plog('Recalculating KPIs and jobs…'); const rr = await call('refresh'); plog('Done: ' + Object.entries(rr).filter(([k]) => /^K|tracker/.test(k)).map(([k, v]) => `${k} ${typeof v === 'object' ? `+${v.inserted}/~${v.updated}/-${v.closed}` : v}`).join(' · '));
-    plog(`Finished in ${Math.round((Date.now() - t0) / 1000)} s.`); toast('Upload complete'); collectDone(true); U.files = []; SH.list.filter(x => x.checked).forEach(x => URL.revokeObjectURL(x.url)); SH.list = SH.list.filter(x => !x.checked && x.status !== 'done'); drawShots(); drawQueue(); await T.reload();
-  } catch (e) { plog('ERROR: ' + (e.error || e.message || e)); collectDone(false); fail(e); }
+    for (const x of geoTodo) {
+      const { k, g } = x; P.step(GEO_NAME[k]); const ts = Date.now();
+      const secs = [...new Set(g.recs.map(r => r.section).filter(Boolean))]; const parts = chunk(g.recs, 1500);
+      for (let i = 0; i < parts.length; i++) { if (parts.length > 1) P.sub(`part ${i + 1} of ${parts.length}`); await callR('ingestGeometry', { kind: k, records: parts[i], sections: secs, append: i > 0, file: g.files.join(', ') }, { timeout: 360000 }); P.tick(); }
+      plog(`${GEO_NAME[k]}: ${g.recs.length} rows stored for worksite tagging (${secs.length} section(s)) [${Math.round((Date.now() - ts) / 1000)} s]`); markSent('geo.' + k, x.h);
+    }
+    if (skipped.length) { P.step('Noting the unchanged reports'); try { await callR('noteUploads', { items: skipped.map(x => Object.assign({}, x, { asOn: x.asOn || S.B.today })) }, { timeout: 120000 }); } catch (e) { plog('  (could not note the unchanged reports: ' + (e.error || e.message || e) + ')'); } P.tick(); }
+    if (trcPlan) await runTRC(pngs, trcFiles.filter(tf => tf.trc), W.pages);
+    P.step('Recalculating KPIs and jobs'); plog('Recalculating KPIs and jobs…'); const tr = Date.now();
+    const rr = await callR('refresh', {}, { timeout: 360000 }); P.tick(4);
+    plog('Done: ' + Object.entries(rr).filter(([k]) => /^K|tracker/.test(k)).map(([k, v]) => `${k} ${typeof v === 'object' ? `+${v.inserted}/~${v.updated}/-${v.closed}` : v}`).join(' · ') + ` [${Math.round((Date.now() - tr) / 1000)} s]`);
+    (rr.recon || []).forEach(l => plog(l));   // report-engine chat: reconciliation of the TMS lists (5b)
+    const slow = P.times.slice().sort((a, b) => b[1] - a[1]).slice(0, 3).map(([l, ms]) => `${l} ${mmss(ms)}`).join(', ');
+    plog(`Finished in ${mmss(Date.now() - t0)} – ${P.calls} server call(s). Longest steps: ${slow}.`);
+    P.end(true, `Finished in ${mmss(Date.now() - t0)} (${P.calls} server calls)`);
+    toast('Upload complete'); collectDone(true); U.files = []; SH.list.filter(x => x.checked).forEach(x => URL.revokeObjectURL(x.url)); SH.list = SH.list.filter(x => !x.checked && x.status !== 'done'); drawShots(); drawQueue(); await T.reload();
+  } catch (e) {
+    const msg = e.error || e.message || e; plog('ERROR: ' + msg);
+    P.end(false, `Stopped at "${P.label}" after ${mmss(Date.now() - P.t0)}: ${String(msg).slice(0, 160)}. Click "Upload and recalculate" to try again – reports already stored are not sent twice.`);
+    collectDone(false); fail(e);
+  }
 }
 // km list -> "2-44,46,50-52" (which km a line's latest data covers; jobs outside it are not closed by this run)
 function kmRanges(kms) { const a = [...new Set(kms || [])].sort((x, y) => x - y); const out = []; for (let i = 0; i < a.length; i++) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(i === j ? '' + a[i] : a[i] + '-' + a[j]); i = j; } return out.join(','); }
@@ -306,10 +407,15 @@ async function runTRC(pngs, trcFiles, webPages = []) {
   const peaks = R.peaks.map(p => ({ lineId: p.lineId, section: p.section, line: p.line, run: p.run, km: p.km, pos: p.pos, param: p.param, value: p.value, status: p.status }));
   const todo = R.todo.map(t => { const l = lineOf[t.lineId] || {}; return Object.assign({}, t, { section: l.section, line: l.line, run: t.run || l.run }); });   // a km the latest run did not record keeps its earlier run
   plog(`  TRC: ${lines.length} line(s), ${blocks.length} blocks, ${todo.length} jobs – uploading…`);
-  const id = upid(); const bc = chunk(blocks, 3000), pc = chunk(peaks, 3000);
-  for (let i = 0; i < Math.max(bc.length, pc.length); i++) await call('ingestTRC', { uploadId: id, blocks: bc[i] || [], peaks: pc[i] || [], final: false });
-  const r = await call('ingestTRC', { uploadId: id, lines, todo, final: true, file: pngs.length + ' TRC pages' });
-  plog(`  TRC jobs: ${r.inserted} new, ${r.updated} updated, ${r.closed || 0} closed / verified by the new run`);
+  // identical TRC results (the same runs sent again) are not sent again
+  const h = hashOf(JSON.stringify({ lines, blocks, peaks, todo })); if (sentBefore('trc', h)) { plog('  TRC: the same runs as in the last upload – not sent again.'); P.tick(Math.max(0, P.total - P.done - 4)); return; }
+  const id = upid(); const bc = chunk(blocks, 6000), pc = chunk(peaks, 6000); const n = Math.max(bc.length, pc.length); const ts = Date.now();
+  P.total += Math.max(0, n + 1 - Math.max(2, Math.ceil(W.pages.length * 5 / 6000) + 1));   // the plan guessed the number of calls
+  for (let i = 0; i < n; i++) { P.step('TRC results'); P.sub(`part ${i + 1} of ${n + 1}`); await callR('ingestTRC', { uploadId: id, blocks: bc[i] || [], peaks: pc[i] || [], final: false }, { timeout: 360000 }); P.tick(); }
+  P.step('TRC jobs'); P.sub(`part ${n + 1} of ${n + 1}`);
+  const r = await callR('ingestTRC', { uploadId: id, lines, todo, final: true, file: (pngs.length ? pngs.length + ' TRC pages' : webPages.length + ' TRC km pages (TMS Collector)') }, { timeout: 360000 }); P.tick();
+  markSent('trc', h);
+  plog(`  TRC jobs: ${r.inserted} new, ${r.updated} changed, ${r.closed || 0} closed / verified by the new run [${Math.round((Date.now() - ts) / 1000)} s]`);
 }
 
 // ---------- screenshots of TMS pages (IMR testing history, OMS comparative summary) ----------
@@ -384,6 +490,7 @@ async function addShots(blobs) {
   drawShots();
 }
 function drawShots() {
+  if (SH.list.length) openManual();
   const el = $('shotList'); if (!el) return;
   if (!SH.list.length) { el.innerHTML = '<div class="muted small">No screenshots yet.</div>'; drawQueue(); return; }
   const secs = segSections(); const todo = SH.list.filter(x => x.status === 'done' && !x.checked), reading = SH.list.filter(x => x.status === 'reading').length;
@@ -669,7 +776,9 @@ V.settings = async el => {
       <div style="padding:12px 14px" class="row"><button class="btn primary" id="saveSet">Save settings</button><button class="btn secondary" id="recalc">Recalculate now</button></div></div>
       <div class="panel body"><h3 class="sec">Sheet backups</h3><p class="small">Every morning at 05:00 a dated copy of the whole Google Sheet is saved in the Drive folder <b>TMS Control backups</b> (copies are never deleted). Google Sheets also keeps every change under File → Version history.</p>
       <p id="bkInfo">${st.backup && st.backup.last ? 'Last copy: <b>' + esc(String(st.backup.last).replace('T', ' ').slice(0, 16)) + '</b>' : 'No copy made yet.'}${st.backup && st.backup.folderUrl ? ` · <a href="${esc(st.backup.folderUrl)}" target="_blank" rel="noopener">Open the backup folder</a>` : ''}</p>
-      <div class="row"><button class="btn secondary" id="bkNow">Back up now</button></div></div>`;
+      <div class="row"><button class="btn secondary" id="bkNow">Back up now</button></div></div>
+      <div class="panel body"><h3 class="sec">Clean start of the job lists (one time)</h3><div id="csw"><p class="small">Loading…</p></div></div>`;
+    cleanStartPanel();
     $('saveSet').onclick = async () => {
       const settings = [...document.querySelectorAll('[data-k]')].map(i => ({ Key: i.dataset.k, Value: i.value }));
       const tm = {}; document.querySelectorAll('[data-t]').forEach(i => { (tm[i.dataset.t] = tm[i.dataset.t] || { JobType: i.dataset.t })[i.dataset.f] = i.value; });
@@ -679,6 +788,20 @@ V.settings = async el => {
     $('recalc').onclick = async e => { e.target.disabled = true; try { const r = await call('refresh'); toast('Recalculated in ' + r.seconds + ' s'); await T.reload(); } catch (er) { fail(er); } e.target.disabled = false; };
   } catch (e) { fail(e); }
 };
+// one-off clean start (15-Oct-2026): close every job created before 10-10-2026 except TRC jobs; open TMS items come back as fresh jobs
+async function cleanStartPanel() {
+  const w = $('csw'); if (!w) return;
+  try {
+    const p = await call('cleanStart', { preview: true, before: '2026-10-10' });
+    const by = Object.entries(p.byType).sort().map(([k, n]) => `${esc(k)} ${n}`).join(' · ') || 'none';
+    if (p.done) { w.innerHTML = `<p>Done: <b>${esc(p.done)}</b>.</p><p class="small muted">The clean start can be run only once. Closed jobs keep their rows and history.</p>`; return; }
+    w.innerHTML = `<p><b>${p.count}</b> open job(s) were created before 10-10-2026: ${by}.</p><p class="small">They will be <b>closed</b> with the reason "Closed by admin – clean start (created before 10-10-2026)". Nothing is deleted – rows and history stay. The <b>${p.trcKept}</b> open TRC jobs stay open. Right after, the jobs are recalculated: every item still open in the latest TMS lists comes back as a <b>fresh job</b> (new job number, created today). This can be done only once.</p><div class="row"><button class="btn primary" id="csGo" ${p.count ? '' : 'disabled'}>Clean start…</button></div>`;
+    $('csGo').onclick = () => modal(`<h3>Clean start: close ${p.count} job(s)</h3><p>${by}</p><p>TRC jobs stay open. Fresh jobs are made for items still open in TMS. Type <b>CLEAN START</b> to confirm.</p><div class="fld"><input id="csC" autocomplete="off"></div>`, async () => {
+      if ($('csC').value.trim() !== 'CLEAN START') { toast('Type CLEAN START to confirm', true); return false; }
+      try { const r = await call('cleanStart', { before: '2026-10-10', confirm: 'CLEAN START' }, { timeout: 360000 }); toast(`${r.closed} job(s) closed, ${r.fresh} fresh job(s) made`); await T.reload(); cleanStartPanel(); } catch (e) { fail(e); return false; }
+    }, 'Close and rebuild');
+  } catch (e) { w.innerHTML = `<p class="od">${esc(e.error || e.message || e)}</p>`; }
+}
 V.uploads = async el => {
   el.innerHTML = T.pageHead('Upload history', 'Every upload, newest first') + `<div class="panel body" id="uph"><div class="empty">Loading…</div></div>`;
   try { const L = (await call('uploads')).reverse(); $('uph').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>When</th><th>By</th><th>Report</th><th>File</th><th>As on</th><th>Records</th><th>New</th><th>Closed</th><th>Note</th></tr></thead><tbody>${L.map(u => `<tr><td class="nw">${esc(String(u.When).replace('T', ' '))}</td><td>${esc(u.By)}</td><td>${esc(KIND_NAME[u.Kind] || u.Kind)}</td><td class="small wrap">${esc(u.File)}</td><td class="nw">${dmy(u.AsOn)}</td><td class="n">${u.Records}</td><td class="n">${u.New}</td><td class="n">${u.Closed}</td><td class="small wrap">${esc(u.Note)}</td></tr>`).join('')}</tbody></table></div>`; } catch (e) { fail(e); }
