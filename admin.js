@@ -94,7 +94,7 @@ V.upload = async el => {
   $('manual').ontoggle = () => { U.manualOpen = $('manual').open; };
   $('sendAll').onchange = e => { U.sendAll = e.target.checked; };
   try {
-    const st = await call('dataStatus');
+    U.statusAt = Date.now(); U.statusP = call('dataStatus').then(st => (U.status = st)); const st = await U.statusP;
     // late: more than the expected interval since the last upload; empty: 0 records for a list that is never empty division-wide
     const maxDays = w => /daily/i.test(w) ? 2 : /twice a week/i.test(w) ? 4 : /weekly/i.test(w) ? 8 : /monthly/i.test(w) ? 35 : null;
     const age = d => d ? Math.floor((Date.parse(S.B.today) - Date.parse(String(d).slice(0, 10))) / 864e5) : null;
@@ -290,7 +290,9 @@ function mergeSets(sets) {
 // ---------- a report identical to the last one sent from this computer is not sent again (speed) ----------
 const hashOf = str => { let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); };
 const SENT_DAYS = 6;   // after this many days a report is sent again even when unchanged
-function sentBefore(key, h) { if (U.sendAll) return false; try { const o = JSON.parse(localStorage.getItem('tmsc.sent.' + key) || 'null'); return !!o && o.h === h && Date.now() - o.at < SENT_DAYS * 864e5; } catch (e) { return false; } }
+// …and only when the server also shows that report arrived at least that recently (a cleared or restored sheet gets everything again)
+function serverHas(key, at) { const r = (U.status || []).find(x => x.kind === key); if (!r) return !!U.status; if (!r.last) return false; const t = Date.parse(String(r.last).replace(' ', 'T') + '+05:30'); return !isNaN(t) && t >= at - 120000; }
+function sentBefore(key, h) { if (U.sendAll) return false; try { const o = JSON.parse(localStorage.getItem('tmsc.sent.' + key) || 'null'); return !!o && o.h === h && Date.now() - o.at < SENT_DAYS * 864e5 && serverHas(key, o.at); } catch (e) { return false; } }
 function markSent(key, h) { try { localStorage.setItem('tmsc.sent.' + key, JSON.stringify({ h, at: Date.now() })); } catch (e) { } }
 const fmtRes = (n, r, closedTxt = 'closed (no longer in TMS)') => `${n} row(s): ${r.inserted} new, ${r.updated} changed, ${r.unchanged != null ? r.unchanged : Math.max(0, n - r.inserted - r.updated)} unchanged${r.closed ? `, ${r.closed} ${closedTxt}` : ''}`;
 async function runUpload() {
@@ -306,6 +308,8 @@ async function runUpload() {
 async function doUpload(t0) {
   P.begin();
   try {
+    // what the server already has (for skipping unchanged reports): the page's own status call, or a fresh one if it is old
+    try { if (!U.statusP || Date.now() - (U.statusAt || 0) > 10 * 60000) { U.statusAt = Date.now(); U.statusP = call('dataStatus').then(st => (U.status = st)); } await U.statusP; } catch (e) { U.status = null; }
     const pngs = U.files.filter(f => /\.png$/i.test(f.name)); const docs = U.files.filter(f => !/\.png$/i.test(f.name));
     const out = { inspections: [], jurisdiction: null }; const trcFiles = []; const kpiSets = [];
     if (W.runId) for (const n of W.notes) plog('TMS Collector: ' + n);
