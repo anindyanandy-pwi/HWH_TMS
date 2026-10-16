@@ -52,7 +52,9 @@ const fail = e => toast((e && e.error) || (e && e.message) || String(e), true);
 function toast(msg, bad) { const t = document.createElement('div'); t.className = 'tip'; t.style.cssText = `left:50%;top:60px;transform:translateX(-50%);background:${bad ? '#c62828' : '#14181f'};pointer-events:auto;z-index:200`; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), bad ? 6000 : 2800); }
 function modal(html, onOk, okText = 'OK') {
   $('modalBody').innerHTML = html; $('modal').classList.remove('hidden'); $('modalOk').textContent = okText; $('modalOk').classList.toggle('hidden', !onOk);
-  $('modalOk').onclick = async () => { const r = onOk && await onOk(); if (r !== false) $('modal').classList.add('hidden'); };
+  $('modalOk').disabled = false;
+  $('modalOk').onclick = async () => { const b = $('modalOk'); if (b.disabled) return; b.disabled = true; b.textContent = 'Working…';   // long server calls: show that it is running
+    let r; try { r = onOk && await onOk(); } finally { b.disabled = false; b.textContent = okText; } if (r !== false) $('modal').classList.add('hidden'); };
   $('modalCancel').onclick = () => $('modal').classList.add('hidden');
 }
 
@@ -60,14 +62,16 @@ function modal(html, onOk, okText = 'OK') {
 const S = { B: null, jobs: [], kpi: null, trc: null, view: null, unit: '__all', f: {}, basis: 'This month', sel: new Set() };
 window.TMSC = { call, esc, dmy, modal, toast, S, $, render: () => render(), reload: () => loadAll(), fail, jobTable: (r, o) => jobTable(r, o), stc, DEV, UA, CFG, refreshBanner: () => banner() };
 const VIEWS = window.TMSC_VIEWS = {};
+const REMIND = { 'K1-INSP': 'Scheduled inspections (P&C / curve / LWR / LC)', 'K2-FP': 'Foot plate / rear vehicle – km not covered', 'K3-TROLLEY': 'Push trolley / on foot – km not covered', 'K16-DAYS': 'Field visit days' };
+const rems = () => (S.B.reminders || []).filter(inUnit);
 const NAVS = {
-  JE: [['work', 'My work'], ['records', 'My work records'], ['position', 'My position'], ['done', 'Done & closed']],
-  SSE: [['work', 'My work'], ['review', 'Check JE work'], ['records', 'Work records'], ['position', 'My position'], ['kpi', 'KPI detail'], ['done', 'Done & closed']],
-  AEN: [['review', 'Approve work'], ['overview', 'Units'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['chronic', 'Chronic locations']],
-  SRDEN: [['overview', 'Overview'], ['review', 'Pending reviews'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['plan', 'Machine plan'], ['chronic', 'Chronic locations']],
-  SRDENC: [['overview', 'Division'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations']],
-  VIEWER: [['overview', 'Division'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['position', 'KPI standing'], ['kpi', 'KPI by unit']],
-  ADMIN: [['overview', 'Division'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations'], ['#Admin'], ['upload', 'Upload data'], ['users', 'Users'], ['settings', 'Settings'], ['uploads', 'Upload history']]
+  JE: [['work', 'My work'], ['insp', 'Inspections due'], ['records', 'My work records'], ['position', 'My position'], ['done', 'Done & closed']],
+  SSE: [['work', 'My work'], ['insp', 'Inspections due'], ['review', 'Check JE work'], ['records', 'Work records'], ['position', 'My position'], ['kpi', 'KPI detail'], ['done', 'Done & closed']],
+  AEN: [['review', 'Approve work'], ['insp', 'Inspections due'], ['overview', 'Units'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['chronic', 'Chronic locations']],
+  SRDEN: [['overview', 'Overview'], ['insp', 'Inspections due'], ['review', 'Pending reviews'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['plan', 'Machine plan'], ['chronic', 'Chronic locations']],
+  SRDENC: [['overview', 'Division'], ['insp', 'Inspections due'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations']],
+  VIEWER: [['overview', 'Division'], ['insp', 'Inspections due'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['position', 'KPI standing'], ['kpi', 'KPI by unit']],
+  ADMIN: [['overview', 'Division'], ['insp', 'Inspections due'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations'], ['#Admin'], ['upload', 'Upload data'], ['users', 'Users'], ['settings', 'Settings'], ['uploads', 'Upload history']]
 };
 const OPEN = ['Open', 'In progress', 'Returned', 'Still defective'];
 const isOpen = j => OPEN.includes(j.Status);
@@ -165,13 +169,20 @@ function banner() {
   if (r === 'SSE' && p.review) out.push(`<div class="ban ${p.reviewOver ? 'crit' : 'warn'}"><b>${p.review}</b> JE work record(s) waiting for your check${p.reviewOver ? ` – <b>${p.reviewOver}</b> beyond time` : ''}. <a href="#" data-go="review">Check now</a></div>`);
   if (r === 'AEN' && p.review) out.push(`<div class="ban ${p.reviewOver ? 'crit' : 'warn'}"><b>${p.review}</b> work record(s) waiting for your approval${p.reviewOver ? ` – <b>${p.reviewOver}</b> beyond time` : ''}. <a href="#" data-go="review">Approve now</a></div>`);
   if (['SRDEN', 'SRDENC', 'ADMIN'].includes(r) && (p.sse || p.aen)) out.push(`<div class="ban ${p.sseOver || p.aenOver ? 'crit' : 'warn'}">Waiting for review: <b>${p.sse || 0}</b> with SSEs${p.sseOver ? ` (${p.sseOver} late)` : ''} · <b>${p.aen || 0}</b> with AENs${p.aenOver ? ` (${p.aenOver} late)` : ''}. <a href="#" data-go="review">See who</a></div>`);
+  const R = rems(); if (R.length) { const by = {}; R.forEach(x => { by[x.Kind] = by[x.Kind] || { n: 0, od: 0 }; by[x.Kind].n++; if (x.Overdue === 'Yes') by[x.Kind].od++; });
+    const k1 = by['K1-INSP'], parts = [];
+    if (k1) parts.push(`<b>${k1.n}</b> scheduled inspection(s) due${k1.od ? ` – <b>${k1.od} overdue</b>` : ''}`);
+    if (by['K2-FP']) parts.push(`foot plate km not covered (${by['K2-FP'].n} unit${by['K2-FP'].n > 1 ? 's' : ''})`);
+    if (by['K3-TROLLEY']) parts.push(`trolley / on foot km pending (${by['K3-TROLLEY'].n})`);
+    if (by['K16-DAYS']) parts.push(`field days short (${by['K16-DAYS'].n})`);
+    if (S.view !== 'insp') out.push(`<div class="ban ${k1 && k1.od ? 'crit' : 'warn'}">Reminder – inspections pending${S.unit !== '__all' ? ' (' + esc(S.unit) + ')' : ''}: ${parts.join(' · ')}. Inspect and enter in TMS; each one clears by itself when the TMS report shows it. <a href="#" data-go="insp">See the list</a></div>`); }
   el.innerHTML = out.join('');
   el.querySelectorAll('[data-go]').forEach(a => a.onclick = e => { e.preventDefault(); S.view = a.dataset.go; S.f = {}; render(); });
 }
 
 function nav() {
   const N = NAVS[role()] || NAVS.VIEWER; const J = S.jobs.filter(inUnit); const p = S.B.pending || {};
-  const cnt = { work: J.filter(isOpen).length, review: p.review || ((p.sse || 0) + (p.aen || 0)) || '', urgent: J.filter(j => j.Overdue || (isOpen(j) && +j.Priority === 1)).length, jobs: J.filter(isOpen).length, chronic: J.filter(j => j.Type === 'CHRONIC' && isOpen(j)).length, plan: J.filter(j => /TRC-(TAMP|RISK|THROUGH|DS)/.test(j.Type) && isOpen(j)).length, phones: p.devices || '' };
+  const cnt = { insp: rems().length || '', work: J.filter(isOpen).length, review: p.review || ((p.sse || 0) + (p.aen || 0)) || '', urgent: J.filter(j => j.Overdue || (isOpen(j) && +j.Priority === 1)).length, jobs: J.filter(isOpen).length, chronic: J.filter(j => j.Type === 'CHRONIC' && isOpen(j)).length, plan: J.filter(j => /TRC-(TAMP|RISK|THROUGH|DS)/.test(j.Type) && isOpen(j)).length, phones: p.devices || '' };
   $('nav').innerHTML = N.map(x => x[0][0] === '#' ? `<div class="navgrp">${x[0].slice(1)}</div>` : `<button data-k="${x[0]}" class="${x[0] === S.view ? 'on' : ''}"><span>${x[1]}</span><span class="cnt${(x[0] === 'urgent' || x[0] === 'review' || x[0] === 'phones') && cnt[x[0]] ? ' crit' : ''}">${cnt[x[0]] ?? ''}</span></button>`).join('');
   $('nav').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.k; S.f = {}; S.sel = new Set(); render(); window.scrollTo(0, 0); };
 }
@@ -247,6 +258,15 @@ function kpiStrip() {
 }
 document.addEventListener('click', e => { const g = e.target.closest('.kpis [data-go]'); if (g) { S.view = g.dataset.go; render(); } });
 VIEWS.done = el => { const J = S.jobs.filter(j => inUnit(j) && !isOpen(j)); const F = filters(J); el.innerHTML = pageHead('Done & closed', 'Last 45 days') + `<div class="panel body">${F.bar}${jobTable(F.out)}</div>`; wireFilters(el); };
+VIEWS.insp = el => {
+  const R = rems(); const t = S.B.today;
+  const head = pageHead('Inspections due', 'Reminders, not jobs: each inspection is recorded in TMS. A line clears by itself when the next TMS report shows the inspection – nothing to close here.');
+  if (!R.length) { el.innerHTML = head + `<div class="panel body"><div class="empty">No inspection pending${S.unit !== '__all' ? ' for ' + esc(S.unit) : ''}.</div></div>`; return; }
+  const sec = Object.keys(REMIND).map(k => { const L = R.filter(x => x.Kind === k).sort((a, b) => String(a.Due || '9').localeCompare(String(b.Due || '9')) || String(a.Unit).localeCompare(String(b.Unit)) || (+a.Pos || 0) - (+b.Pos || 0)); if (!L.length) return '';
+    const od = L.filter(x => x.Overdue === 'Yes').length;
+    return `<div class="panel body"><h3 style="margin:0 0 8px">${esc(REMIND[k])} <span class="muted small">${L.length}${od ? ` · <span class="od">${od} overdue</span>` : ''}</span></h3><div class="scroll"><table class="t"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th><th>Detail</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.Unit)}</td><td>${esc(x.Title)}</td><td>${esc(x.Location)}</td><td>${dmy(x.Due)}${x.Overdue === 'Yes' || (x.Due && String(x.Due).slice(0, 10) < t) ? '<br><span class="od">overdue</span>' : ''}</td><td class="small">${esc(x.Detail)}</td></tr>`).join('')}</tbody></table></div></div>`; }).join('');
+  el.innerHTML = head + sec;
+};
 VIEWS.jobs = el => {
   const J = S.jobs.filter(inUnit); if (!S.f.st && S.f.st !== '') S.f.st = 'open'; const F = filters(J); const adm = role() === 'ADMIN';
   el.innerHTML = pageHead('All jobs', scopeText(), adm ? `<span class="muted right small">Admin: tick jobs to close / delete them</span>` : '') + `<div class="panel body">${F.bar}${adm ? adminBar(F.out) : ''}${jobTable(F.out, { select: adm })}</div>`; wireFilters(el);
@@ -272,10 +292,14 @@ function closeByDate(o = {}) {
     <div id="cbP" class="small" style="margin:10px 0">Counting…</div>
     <p class="small muted">Nothing is deleted: the jobs are closed with the reason "Closed by admin – clean start (created before …)" and keep their history. Right after, the jobs are recalculated: whatever is still open in the latest TMS reports comes back as a <b>fresh job</b> (new number, created today).</p>`, async () => {
     const before = $('cbD').value; if (!before) { toast('Choose the date', true); return false; }
-    try { const r = await call('cleanStart', { before, type: o.type || '', unit: o.unit || '', includeTrc: $('cbT').checked, confirm: 'CLOSE' }, { timeout: 360000 }); toast(`${r.closed} job(s) closed, ${r.fresh} fresh job(s) made`); S.sel = new Set(); await loadAll(); if (o.done) o.done(r); } catch (e) { fail(e); return false; }
+    try { $('cbP').innerHTML = '<b>Closing the jobs…</b> (about a minute)';
+      const r = await call('cleanStart', { before, type: o.type || '', unit: o.unit || '', includeTrc: $('cbT').checked, confirm: 'CLOSE', noRefresh: true }, { timeout: 360000 });
+      $('cbP').innerHTML = `<b>${r.closed} job(s) closed.</b> Recalculating the jobs from the latest TMS reports… (2–4 minutes – keep this page open)`;
+      let f = null; try { const q = await call('refresh', {}, { timeout: 360000 }); f = q; } catch (e2) { toast('Jobs closed. The recalculation did not finish (' + (e2.error || e2.message || e2) + ') – press Recalculate in Settings.', true); }
+      toast(`${r.closed} job(s) closed` + (f ? ` – recalculated in ${f.seconds} s` : '')); S.sel = new Set(); await loadAll(); if (o.done) o.done(r); } catch (e) { fail(e); return false; }
   }, 'Close them');
   const prev = async () => { const before = $('cbD').value; if (!before) return; $('cbP').textContent = 'Counting…';
-    try { const p = await call('cleanStart', { preview: true, before, type: o.type || '', unit: o.unit || '', includeTrc: $('cbT').checked }); const by = Object.entries(p.byType).sort().map(([k, n]) => `${k} ${n}`).join(' · ');
+    try { const p = await call('cleanStartPreview', { before, type: o.type || '', unit: o.unit || '', includeTrc: $('cbT').checked }); const by = Object.entries(p.byType).sort().map(([k, n]) => `${k} ${n}`).join(' · ');
       $('cbP').innerHTML = `<b>${p.count}</b> open job(s) created before ${dmy(before)}${by ? ': ' + esc(by) : ''}${p.trcKept ? ` · ${p.trcKept} TRC / chronic job(s) stay open` : ''}`; } catch (e) { $('cbP').textContent = e.error || e.message || e; } };
   $('cbD').onchange = prev; $('cbT').onchange = prev; prev();
 }

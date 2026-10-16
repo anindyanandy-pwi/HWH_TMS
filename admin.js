@@ -837,7 +837,7 @@ function jurCompareHtml(c, src) {
 async function cleanStartPanel() {
   const w = $('csw'); if (!w) return;
   try {
-    const p = await call('cleanStart', { preview: true, before: S.B.today });
+    const p = await call('cleanStartPreview', { before: S.B.today });
     w.innerHTML = `<p class="small">Close every open job created before a date you choose (all units, or use "Close jobs created before a date…" on All jobs for one type / unit). Nothing is deleted. Items still open in the latest TMS reports come back as fresh jobs. TRC and chronic jobs stay open unless you tick them.</p>
       <p class="small">Open jobs created before today: <b>${p.count}</b>${p.trcKept ? ` (+ ${p.trcKept} TRC / chronic)` : ''}.${p.done ? ` Last run: ${esc(String(p.done).split(' | ')[0])}.` : ''}</p><div class="row"><button class="btn primary" id="csGo">Close jobs created before a date…</button></div>`;
     $('csGo').onclick = () => T.closeByDate({ before: p.done ? S.B.today : '2026-10-10', done: () => cleanStartPanel() });
