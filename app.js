@@ -337,7 +337,7 @@ VIEWS.kpi = el => {
 // ---------- KPI cell: what the figures mean (16-Oct: "I cannot understand what these mean") ----------
 const KPI_VALUE = { K1: '% of scheduled inspections overdue (weighted)', K2: 'Average % of the jurisdiction NOT covered per fortnight', K3: '% of the jurisdiction NOT covered in the two months', K10: '% of defects pending more than 10 days', K11: '% of IMRs removed after more than 3 days', K12: '% of new AT welds defective at the first test', K13: '% of AT welds awaiting joggled plates', K14: '% of DFWR (older than 90 days) removed', K15: '% of FP joints overdue for oiling & greasing', K16: 'Field visit days' };
 function kpiRule(k) {
-  const d = (S.B.kpiDefs || {})[k] || {}; const R = { K1: 'P&C 30 %, curves 30 %, LWR 20 %, LC 20 % – % overdue on the 1st of the month', K2: 'whole jurisdiction to be covered by foot plate / rear vehicle in 1st–15th and in 16th–month end; average shortfall of the two', K3: 'whole jurisdiction by push trolley (on foot allowed where speed > 110 km/h) in the previous two months', K16: 'distinct days with an inspection recorded in TMS by the SSE in-charge' }[k] || '';
+  const d = (S.B.kpiDefs || {})[k] || {}; const R = { K1: 'P&C 30 %, curves 30 %, LWR 20 %, LC 20 % – % overdue on the last day of the month (due that day is not overdue)', K2: 'whole jurisdiction to be covered by foot plate / rear vehicle in 1st–15th and in 16th–month end; average shortfall of the two', K3: 'whole jurisdiction by push trolley (on foot allowed where speed > 110 km/h) in the previous two months', K16: 'distinct days with an inspection recorded in TMS by the SSE in-charge' }[k] || '';
   if (k === 'K16') return R + '. Marks: 16 or more days → 4, 11–15 → 3, 7–10 → 2, fewer → 0';
   const b = d.bands || []; if (!b.length || d.kind !== 'short') return R;
   const parts = b.map((x, i) => i === 0 ? `0 % → ${x[1]}` : x[0] >= 1e9 ? `more → ${x[1]}` : `up to ${x[0]} % → ${x[1]}`);
@@ -350,7 +350,7 @@ function kpiExplain(k, x) {
   if (k === 'K1' && x.byType) {
     const nm = { PXING: 'P&C', CURVE: 'Curve', LWR: 'LWR', LXING: 'Level crossing' };
     return `<h4 style="margin:10px 0 4px">Assets in the Latest inspection report</h4>` + tbl(['Asset', 'Counted', 'Overdue', '% overdue', 'Never inspected', 'Overdue > 1 year (not counted)'], Object.entries(x.byType).map(([t, o]) => [nm[t] || t, o.n, o.over, o.n ? pct(o.over / o.n * 100) : '—', o.never || 0, o.stale || 0]))
-      + list('Overdue now', x.over, x.overN) + list('Falling due before the 1st – inspect them to keep the marks', x.soon, x.soonN)
+      + list('Overdue now', x.over, x.overN) + list('Falling due later this month – inspect them before they become overdue', x.soon, x.soonN)
       + `<p class="small muted">An inspection counts here once the "Latest inspection report" uploaded from TMS shows the new date.</p>`;
   }
   if (k === 'K2' && x.total != null) return tbl(['Fortnight', 'km covered', 'of km', '% short'], [['1st–15th', x.covered1 ?? (x.total - x.missing1), x.total, pct(x.f1)], ['16th–end', x.covered2 ?? (x.total - x.missing2), x.total, pct(x.f2)]])
