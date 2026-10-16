@@ -259,13 +259,34 @@ window.TMSC.scopeText = scopeText;
 
 // ---------- admin: close / delete jobs (work done before the system started, or wrong jobs) ----------
 function adminBar(rows) {
-  return `<div class="tablebar adminbar"><span><b id="selN">${S.sel.size}</b> selected</span><button class="btn secondary sm" data-ad="close">Close as already done</button><button class="btn secondary sm" data-ad="delete">Delete (wrong job)</button><span class="muted">or</span><button class="btn ghost sm" data-ad="closeAll">Close all ${rows.length} in this filter…</button></div>`;
+  return `<div class="tablebar adminbar"><span><b id="selN">${S.sel.size}</b> selected</span><button class="btn secondary sm" data-ad="close">Close as already done</button><button class="btn secondary sm" data-ad="delete">Delete (wrong job)</button><span class="muted">or</span><button class="btn ghost sm" data-ad="closeAll">Close all ${rows.length} in this filter…</button><span class="muted">or</span><button class="btn secondary sm" data-ad="byDate">Close jobs created before a date…</button></div>`;
 }
+// close every open job created before a chosen date (cut-off) – items still open in TMS come back as fresh jobs at the recalculation
+function closeByDate(o = {}) {
+  const tname = o.type ? (S.jobs.find(j => j.Type === o.type) || {}).TypeName || o.type : '';
+  const def = o.before || S.B.today;
+  modal(`<h3>Close jobs created before a date</h3>
+    <div class="row"><div class="fld"><label>Cut-off date – jobs created BEFORE this date are closed</label><input type="date" id="cbD" value="${esc(def)}" max="${esc(S.B.today)}"></div></div>
+    <p class="small">${o.type || o.unit ? `Only: ${esc([tname, o.unit ? 'unit ' + o.unit : ''].filter(Boolean).join(', '))} (the job list's filter).` : 'All job types and units.'}</p>
+    <label class="small"><input type="checkbox" id="cbT"> Also TRC and chronic-location jobs (normally kept open until attended or cleared by a newer run)</label>
+    <div id="cbP" class="small" style="margin:10px 0">Counting…</div>
+    <p class="small muted">Nothing is deleted: the jobs are closed with the reason "Closed by admin – clean start (created before …)" and keep their history. Right after, the jobs are recalculated: whatever is still open in the latest TMS reports comes back as a <b>fresh job</b> (new number, created today).</p>`, async () => {
+    const before = $('cbD').value; if (!before) { toast('Choose the date', true); return false; }
+    try { const r = await call('cleanStart', { before, type: o.type || '', unit: o.unit || '', includeTrc: $('cbT').checked, confirm: 'CLOSE' }, { timeout: 360000 }); toast(`${r.closed} job(s) closed, ${r.fresh} fresh job(s) made`); S.sel = new Set(); await loadAll(); if (o.done) o.done(r); } catch (e) { fail(e); return false; }
+  }, 'Close them');
+  const prev = async () => { const before = $('cbD').value; if (!before) return; $('cbP').textContent = 'Counting…';
+    try { const p = await call('cleanStart', { preview: true, before, type: o.type || '', unit: o.unit || '', includeTrc: $('cbT').checked }); const by = Object.entries(p.byType).sort().map(([k, n]) => `${k} ${n}`).join(' · ');
+      $('cbP').innerHTML = `<b>${p.count}</b> open job(s) created before ${dmy(before)}${by ? ': ' + esc(by) : ''}${p.trcKept ? ` · ${p.trcKept} TRC / chronic job(s) stay open` : ''}`; } catch (e) { $('cbP').textContent = e.error || e.message || e; } };
+  $('cbD').onchange = prev; $('cbT').onchange = prev; prev();
+}
+window.TMSC.closeByDate = closeByDate;
 function wireAdmin(el, rows) {
   el.querySelectorAll('[data-sel]').forEach(c => c.onchange = () => { c.checked ? S.sel.add(c.dataset.sel) : S.sel.delete(c.dataset.sel); $('selN').textContent = S.sel.size; });
   const all = $('selAll'); if (all) all.onchange = () => { el.querySelectorAll('[data-sel]').forEach(c => { c.checked = all.checked; all.checked ? S.sel.add(c.dataset.sel) : S.sel.delete(c.dataset.sel); }); $('selN').textContent = S.sel.size; };
   el.querySelectorAll('[data-ad]').forEach(b => b.onclick = () => {
-    const act = b.dataset.ad; const many = act === 'closeAll'; const ids = many ? rows.map(j => j.JobId) : [...S.sel];
+    const act = b.dataset.ad;
+    if (act === 'byDate') { const tf = S.f.type ? (S.jobs.find(j => j.TypeName === S.f.type) || {}).Type : ''; closeByDate({ type: tf, unit: S.f.u || (S.unit !== '__all' ? S.unit : '') }); return; }
+    const many = act === 'closeAll'; const ids = many ? rows.map(j => j.JobId) : [...S.sel];
     if (!ids.length) { toast('Tick the jobs first', true); return; }
     const verb = act === 'delete' ? 'Delete' : 'Close as already done';
     modal(`<h3>${verb}: ${ids.length} job(s)</h3><p>${act === 'delete' ? 'Use this for jobs that are wrong. They are hidden from all lists but kept in the history with your reason.' : 'Use this for work already done before the system started. The jobs are closed and will not reopen from the same TMS data.'}</p><div class="fld"><label>Reason (required)</label><textarea id="adR" placeholder="${act === 'delete' ? 'e.g. duplicate of job …, location not in our jurisdiction' : 'e.g. attended in Sept 2026 before the system started (register entry …)'}"></textarea></div>`, async () => {
@@ -308,16 +329,46 @@ VIEWS.kpi = el => {
   const cls = (k, v) => v === '' || v == null ? 'mkn' : +v >= KMAX(k) ? 'mk5' : +v >= KMAX(k) - 1 ? 'mk4' : +v >= 3 ? 'mk3' : +v >= 2 ? 'mk2' : 'mk0';
   el.innerHTML = pageHead('KPI by unit', basis === 'This month' ? 'FORECAST for this month – the marks expected on the coming 1st. Periods not yet started are left out; a fortnight / month still running is judged on the work so far at the present pace (click a cell: "Based on"). Open the jobs to save the marks.' : 'LAST MONTH – the score for the month that is over, as calculated – compare with the official TMS score (red outline = differs)',
     `<div class="right row"><button class="btn ${basis === 'This month' ? 'primary' : 'secondary'} sm" data-b="This month">This month (forecast)</button><button class="btn ${basis === 'Last month' ? 'primary' : 'secondary'} sm" data-b="Last month">Last month (score) vs TMS</button></div>`) +
-    `<div class="panel body"><div class="scroll"><table class="t km"><thead><tr><th>Unit</th>${K.map(k => `<th title="${esc(S.B.kpiNames[k])}">${k}</th>`).join('')}<th>Total / 82</th>${basis === 'Last month' ? '<th>TMS total</th>' : ''}</tr></thead><tbody>${rows.sort((a, b) => String(a.Unit).localeCompare(String(b.Unit))).map(r => `<tr><td class="nw"><b>${esc(r.Unit)}</b><div class="small">${dmy(r.AsOn)}</div></td>${K.map(k => { const d = (r.Detail || {})[k] || {}; const o = off[r.Unit]; const mis = basis === 'Last month' && o && d.src === 'calc' && o[k] !== '' && +o[k] !== +r[k]; return `<td class="m ${cls(k, r[k])} ${mis ? 'mis' : ''}" data-u="${esc(r.Unit)}" data-k="${k}" style="cursor:pointer" title="${esc(S.B.kpiNames[k])} – ${esc(d.src || '')}">${r[k] === '' || r[k] == null ? '–' : r[k]}${d.src && /^official/.test(d.src) ? '<sup>*</sup>' : ''}</td>`; }).join('')}<td class="n"><b>${r.Total}</b></td>${basis === 'Last month' ? `<td class="n">${off[r.Unit] ? off[r.Unit].Total : '—'}</td>` : ''}</tr>`).join('') || `<tr><td colspan="19" class="empty">No KPI data yet – the admin has to upload TMS reports.</td></tr>`}</tbody></table></div>
+    `<div class="panel body"><div class="scroll"><table class="t km"><thead><tr><th>Unit</th>${K.map(k => `<th title="${esc(S.B.kpiNames[k])}">${k}</th>`).join('')}<th>Total / 82</th>${basis === 'Last month' ? '<th>TMS total</th>' : ''}</tr></thead><tbody>${rows.sort((a, b) => String(a.Unit).localeCompare(String(b.Unit))).map(r => `<tr><td class="nw"><b>${esc(r.Unit)}</b><div class="small">${basis === 'This month' ? 'calculated ' + dmy(String(r.Computed || r.AsOn).slice(0, 10)) : (() => { const [y, m] = S.B.today.split('-').map(Number); const d = new Date(Date.UTC(y, m - 2, 1)); return d.toLocaleString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }); })()}</div></td>${K.map(k => { const d = (r.Detail || {})[k] || {}; const o = off[r.Unit]; const mis = basis === 'Last month' && o && d.src === 'calc' && o[k] !== '' && +o[k] !== +r[k]; return `<td class="m ${cls(k, r[k])} ${mis ? 'mis' : ''}" data-u="${esc(r.Unit)}" data-k="${k}" style="cursor:pointer" title="${esc(S.B.kpiNames[k])} – ${esc(d.src || '')}">${r[k] === '' || r[k] == null ? '–' : r[k]}${d.src && /^official/.test(d.src) ? '<sup>*</sup>' : ''}</td>`; }).join('')}<td class="n"><b>${r.Total}</b></td>${basis === 'Last month' ? `<td class="n">${off[r.Unit] ? off[r.Unit].Total : '—'}</td>` : ''}</tr>`).join('') || `<tr><td colspan="19" class="empty">No KPI data yet – the admin has to upload TMS reports.</td></tr>`}</tbody></table></div>
     <div class="legend"><span>* = no data uploaded for this item: the latest official TMS marks are shown</span><span>– = no data</span><span>Click a cell for details and to add a remark / site constraint</span></div></div>`;
   el.querySelectorAll('[data-b]').forEach(b => b.onclick = () => { S.basis = b.dataset.b; render(); });
   el.querySelectorAll('td[data-k]').forEach(td => td.onclick = () => kpiCell(td.dataset.u, td.dataset.k, rows.find(r => r.Unit === td.dataset.u)));
 };
+// ---------- KPI cell: what the figures mean (16-Oct: "I cannot understand what these mean") ----------
+const KPI_VALUE = { K1: '% of scheduled inspections overdue (weighted)', K2: 'Average % of the jurisdiction NOT covered per fortnight', K3: '% of the jurisdiction NOT covered in the two months', K10: '% of defects pending more than 10 days', K11: '% of IMRs removed after more than 3 days', K12: '% of new AT welds defective at the first test', K13: '% of AT welds awaiting joggled plates', K14: '% of DFWR (older than 90 days) removed', K15: '% of FP joints overdue for oiling & greasing', K16: 'Field visit days' };
+function kpiRule(k) {
+  const d = (S.B.kpiDefs || {})[k] || {}; const R = { K1: 'P&C 30 %, curves 30 %, LWR 20 %, LC 20 % – % overdue on the 1st of the month', K2: 'whole jurisdiction to be covered by foot plate / rear vehicle in 1st–15th and in 16th–month end; average shortfall of the two', K3: 'whole jurisdiction by push trolley (on foot allowed where speed > 110 km/h) in the previous two months', K16: 'distinct days with an inspection recorded in TMS by the SSE in-charge' }[k] || '';
+  if (k === 'K16') return R + '. Marks: 16 or more days → 4, 11–15 → 3, 7–10 → 2, fewer → 0';
+  const b = d.bands || []; if (!b.length || d.kind !== 'short') return R;
+  const parts = b.map((x, i) => i === 0 ? `0 % → ${x[1]}` : x[0] >= 1e9 ? `more → ${x[1]}` : `up to ${x[0]} % → ${x[1]}`);
+  return [R, 'Marks: ' + parts.join(', ') + (b[b.length - 1][0] >= 1e9 ? '' : ', more → 0')].filter(Boolean).join('. ');
+}
+function kpiExplain(k, x) {
+  const tbl = (head, rows) => `<div class="scroll"><table class="t compact"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const list = (t, L, n) => L && L.length ? `<h4 style="margin:10px 0 4px">${t}${n > L.length ? ` (first ${L.length} of ${n})` : ` (${L.length})`}</h4><div class="small" style="max-height:180px;overflow:auto">${L.map(s => `<div>${esc(s)}</div>`).join('')}</div>` : '';
+  const pct = v => v == null ? '—' : (Math.round(v * 10) / 10) + ' %';
+  if (k === 'K1' && x.byType) {
+    const nm = { PXING: 'P&C', CURVE: 'Curve', LWR: 'LWR', LXING: 'Level crossing' };
+    return `<h4 style="margin:10px 0 4px">Assets in the Latest inspection report</h4>` + tbl(['Asset', 'Counted', 'Overdue', '% overdue', 'Never inspected', 'Overdue > 1 year (not counted)'], Object.entries(x.byType).map(([t, o]) => [nm[t] || t, o.n, o.over, o.n ? pct(o.over / o.n * 100) : '—', o.never || 0, o.stale || 0]))
+      + list('Overdue now', x.over, x.overN) + list('Falling due before the 1st – inspect them to keep the marks', x.soon, x.soonN)
+      + `<p class="small muted">An inspection counts here once the "Latest inspection report" uploaded from TMS shows the new date.</p>`;
+  }
+  if (k === 'K2' && x.total != null) return tbl(['Fortnight', 'km covered', 'of km', '% short'], [['1st–15th', x.covered1 ?? (x.total - x.missing1), x.total, pct(x.f1)], ['16th–end', x.covered2 ?? (x.total - x.missing2), x.total, pct(x.f2)]])
+    + (x.miss1 ? `<h4 style="margin:10px 0 4px">Not covered, 1st–15th</h4><div class="small">${esc(x.miss1)}</div>` : '') + (x.miss2 ? `<h4 style="margin:10px 0 4px">Not covered yet, 16th–end</h4><div class="small">${esc(x.miss2)}</div>` : '')
+    + `<p class="small muted">Counted: foot plate / rear vehicle trips of the SSE in-charge in the inspection registers uploaded from TMS, each line of the jurisdiction separately (km by km).</p>`;
+  if (k === 'K3' && x.total != null) return tbl(['km covered', 'of km', '% not covered'], [[x.covered ?? (x.total - x.missing), x.total, pct(x.total ? x.missing / x.total * 100 : 0)]])
+    + (x.miss ? `<h4 style="margin:10px 0 4px">Not covered in the two months</h4><div class="small">${esc(x.miss)}</div>` : '') + `<p class="small muted">Counted: push trolley (on foot where speed > 110 km/h) by the SSE in-charge, both months.</p>`;
+  if (k === 'K16') { const T = { FP: 'Foot plate', RV: 'Rear vehicle', FOOT: 'On foot', TROLLEY: 'Trolley', PXING: 'P&C', PXING_JOINT: 'Joint P&C', OTHER: 'Other inspections', USFD: 'USFD', CURVE: 'Curve', LC: 'LC', LWR: 'LWR', DIAMOND: 'Diamond' };
+    return tbl(['Days so far', 'Dates', 'Days by inspection type'], [[x.soFar ?? x.days, x.dates || '', Object.entries(x.byType || {}).map(([t, n]) => `${T[t] || t} ${n}`).join(', ')]]); }
+  const e = Object.entries(x || {}).filter(([, v]) => v != null && typeof v !== 'object');
+  return e.length ? tbl(['Item', 'Value'], e.map(([a, v]) => [a.replace(/([A-Z])/g, ' $1').toLowerCase(), v])) : '';
+}
 function kpiCell(unit, k, r) {
   const d = (r.Detail || {})[k] || {}; const notes = (S.kpi.notes || []).filter(n => n.Unit === unit && n.KPI === k).slice(-5).reverse();
   const off = (S.kpi.official || []).filter(o => o.Unit === unit).sort((a, b) => String(b.ProcDate).localeCompare(String(a.ProcDate)))[0];
   const canNote = ['SSE', 'JE', 'AEN', 'SRDEN', 'SRDENC', 'ADMIN'].includes(role());
-  modal(`<h3>${esc(unit)} · ${k} – ${esc(S.B.kpiNames[k])}</h3><dl class="dl"><dt>Marks (${esc(r.Basis === 'This month' ? 'forecast for this month' : 'last month')})</dt><dd><b>${r[k] === '' ? '—' : r[k]}</b> of ${KMAX(k)}</dd>${d.b ? `<dt>Based on</dt><dd>${esc(d.b)}</dd>` : ''}<dt>${r.Basis === 'This month' && d.b && /^Forecast/.test(d.b) ? 'Forecast value' : 'Value'}</dt><dd>${d.v == null ? '—' : d.v + (k === 'K16' ? ' days' : ' %')}</dd><dt>Source</dt><dd>${esc(d.src || '—')}</dd><dt>Details</dt><dd class="small">${esc(JSON.stringify(d.d || {}, null, 1)).replace(/[{}"]/g, '')}</dd><dt>Official TMS</dt><dd>${off ? `${off[k]} (processing date ${dmy(off.ProcDate)})` : '—'}</dd></dl>
+  const fc = r.Basis === 'This month' && d.b && /^Forecast/.test(d.b);
+  modal(`<h3>${esc(unit)} · ${k} – ${esc(S.B.kpiNames[k])}</h3><dl class="dl"><dt>Marks (${esc(r.Basis === 'This month' ? 'forecast for this month' : 'last month')})</dt><dd><b>${r[k] === '' ? '—' : r[k]}</b> of ${KMAX(k)}</dd>${d.b ? `<dt>Based on</dt><dd>${esc(d.b)}</dd>` : ''}<dt>${fc ? 'Forecast: ' : ''}${esc(KPI_VALUE[k] || 'Value')}</dt><dd>${d.v == null ? '—' : d.v + (k === 'K16' ? ' days' : ' %')}</dd><dt>How TMS scores it</dt><dd class="small">${esc(kpiRule(k))}</dd><dt>Source</dt><dd>${esc(d.src === 'calc' ? 'calculated here from the TMS reports uploaded' : d.src || '—')}</dd></dl>${kpiExplain(k, d.d || {})}<dl class="dl"><dt>Official TMS</dt><dd>${off ? `${off[k]} (processing date ${dmy(off.ProcDate)})` : '—'}</dd></dl>
     <div class="actbox"><h4>Remarks / site constraints for ${k}</h4>${notes.map(n => `<div class="small"><b>${esc(n.Name)}</b> ${dmy(n.When)}: ${esc(n.Note)}</div>`).join('') || '<div class="small muted">None yet.</div>'}
     ${canNote ? `<div class="fld" style="margin-top:8px"><textarea id="kn" placeholder="e.g. Block not available on UP line since 12-Oct; trolley inspection planned 20-Oct"></textarea></div>` : ''}</div>`,
     canNote ? async () => { const v = $('kn').value.trim(); if (!v) return true; try { await call('unitNote', { unit, kpi: k, note: v }); toast('Remark saved'); S.kpi = await call('kpi', {}, { cache: true }); } catch (e) { fail(e); return false; } } : null, 'Save remark');

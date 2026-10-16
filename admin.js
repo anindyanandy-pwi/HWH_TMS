@@ -799,14 +799,19 @@ V.settings = async el => {
   el.innerHTML = T.pageHead('Settings', 'Rules and target days – changes apply at the next recalculation') + `<div id="setw"><div class="empty">Loading…</div></div>`;
   try {
     const st = await call('settings');
-    $('setw').innerHTML = `<div class="panel body"><h3 class="sec">Settings</h3><div class="scroll"><table class="t"><thead><tr><th>Setting</th><th>Value</th><th>Meaning</th></tr></thead><tbody>${st.settings.map(s => `<tr><td class="nw"><b>${esc(s.Key)}</b></td><td><input data-k="${esc(s.Key)}" value="${esc(s.Value)}" style="width:220px;padding:4px 6px;border:1px solid #b9bfc9"></td><td class="small wrap">${esc(s.Note)}</td></tr>`).join('')}</tbody></table></div></div>
-      <div class="panel body"><h3 class="sec">Target days by job type</h3><div class="scroll"><table class="t"><thead><tr><th>Job type</th><th>SSE to complete (days)</th><th>AEN to approve (days)</th><th>Photo required</th><th>Closes by TMS data</th></tr></thead><tbody>${st.targets.map(t => `<tr><td>${esc(t.Description)}<div class="small muted">${esc(t.JobType)} · ${esc(t.KPI)}</div></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="SSEDays" value="${esc(t.SSEDays)}" style="width:80px"></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="AENDays" value="${esc(t.AENDays)}" style="width:80px"></td><td><select data-t="${esc(t.JobType)}" data-f="PhotoRequired"><option ${t.PhotoRequired === 'Yes' ? 'selected' : ''}>Yes</option><option ${t.PhotoRequired !== 'Yes' ? 'selected' : ''}>No</option></select></td><td class="small">${esc(t.ClosedByData)}</td></tr>`).join('')}</tbody></table></div>
-      <div style="padding:12px 14px" class="row"><button class="btn primary" id="saveSet">Save settings</button><button class="btn secondary" id="recalc">Recalculate now</button></div></div>
-      <div class="panel body"><h3 class="sec">Sheet backups</h3><p class="small">Every morning at 05:00 a dated copy of the whole Google Sheet is saved in the Drive folder <b>TMS Control backups</b> (copies are never deleted). Google Sheets also keeps every change under File → Version history.</p>
+    // grouped and folded (16-Oct: "These settings should be grouped and minimized/collapsible")
+    const G = [['KPI rules', /^(K\d+_|JUR_SOURCE)/], ['Work records and jobs', /^(SSE_CHECK_DAYS|PHOTO_|K14_WARN|K1_WARN)/], ['Measurement limits (IRPWM)', /^LIM_/], ['Users and phones', /^(MaxDevices|DEVICE_)/], ['System (written by push.bat – normally not changed)', /./]];
+    const grp = G.map(g => ({ t: g[0], rows: [] })); st.settings.forEach(x => { const i = G.findIndex(g => g[1].test(x.Key)); grp[i].rows.push(x); });
+    const fold = (title, body, open) => `<details class="panel body setgrp"${open ? ' open' : ''}><summary class="sec" style="cursor:pointer;padding:10px 14px;font-weight:600">${title}</summary><div style="padding:0 14px 12px">${body}</div></details>`;
+    const setTable = rows => `<div class="scroll"><table class="t"><thead><tr><th>Setting</th><th>Value</th><th>Meaning</th></tr></thead><tbody>${rows.map(s => `<tr><td class="nw"><b>${esc(s.Key)}</b></td><td><input data-k="${esc(s.Key)}" value="${esc(s.Value)}" style="width:220px;padding:4px 6px;border:1px solid #b9bfc9"></td><td class="small wrap">${esc(s.Note)}</td></tr>`).join('')}</tbody></table></div>`;
+    $('setw').innerHTML = `<div class="panel body" style="padding:12px 14px"><div class="row"><button class="btn primary" id="saveSet">Save settings</button><button class="btn secondary" id="recalc">Recalculate now</button><span class="small muted">Open a group to change it. Changes apply at the next recalculation.</span></div></div>`
+      + grp.filter(g => g.rows.length).map(g => fold(`${esc(g.t)} <span class="muted small">(${g.rows.length})</span>`, setTable(g.rows))).join('')
+      + fold('Target days by job type', `<div class="scroll"><table class="t"><thead><tr><th>Job type</th><th>SSE to complete (days)</th><th>AEN to approve (days)</th><th>Photo required</th><th>Closes by TMS data</th></tr></thead><tbody>${st.targets.map(t => `<tr><td>${esc(t.Description)}<div class="small muted">${esc(t.JobType)} · ${esc(t.KPI)}</div></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="SSEDays" value="${esc(t.SSEDays)}" style="width:80px"></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="AENDays" value="${esc(t.AENDays)}" style="width:80px"></td><td><select data-t="${esc(t.JobType)}" data-f="PhotoRequired"><option ${t.PhotoRequired === 'Yes' ? 'selected' : ''}>Yes</option><option ${t.PhotoRequired !== 'Yes' ? 'selected' : ''}>No</option></select></td><td class="small">${esc(t.ClosedByData)}</td></tr>`).join('')}</tbody></table></div>`)
+      + fold('Sheet backups', `<p class="small">Every morning at 05:00 a dated copy of the whole Google Sheet is saved in the Drive folder <b>TMS Control backups</b> (copies are never deleted). Google Sheets also keeps every change under File → Version history.</p>
       <p id="bkInfo">${st.backup && st.backup.last ? 'Last copy: <b>' + esc(String(st.backup.last).replace('T', ' ').slice(0, 16)) + '</b>' : 'No copy made yet.'}${st.backup && st.backup.folderUrl ? ` · <a href="${esc(st.backup.folderUrl)}" target="_blank" rel="noopener">Open the backup folder</a>` : ''}</p>
-      <div class="row"><button class="btn secondary" id="bkNow">Back up now</button></div></div>
-      <div class="panel body"><h3 class="sec">Clean start of the job lists (one time)</h3><div id="csw"><p class="small">Loading…</p></div></div>
-      <div class="panel body"><h3 class="sec">Jurisdiction: TMS compared with the file</h3><div id="jcw">${jurCompareHtml(st.jurCompare)}</div></div>`;
+      <div class="row"><button class="btn secondary" id="bkNow">Back up now</button></div>`)
+      + fold('Close old jobs (clean start)', `<div id="csw"><p class="small">Loading…</p></div>`)
+      + fold('Jurisdiction: TMS compared with the file', `<div id="jcw">${jurCompareHtml(st.jurCompare, st.jurSource)}</div>`);
     cleanStartPanel();
     $('saveSet').onclick = async () => {
       const settings = [...document.querySelectorAll('[data-k]')].map(i => ({ Key: i.dataset.k, Value: i.value }));
@@ -814,15 +819,15 @@ V.settings = async el => {
       try { await call('saveSettings', { settings, targets: Object.values(tm) }); toast('Saved'); } catch (e) { fail(e); }
     };
     $('bkNow').onclick = async e => { e.target.disabled = true; try { const r = await call('backupNow', {}, { timeout: 300000 }); $('bkInfo').innerHTML = `Saved: <b>${esc(r.name)}</b> · <a href="${esc(r.url)}" target="_blank" rel="noopener">open the copy</a>`; toast('Backup saved'); } catch (er) { fail(er); } e.target.disabled = false; };
-    $('recalc').onclick = async e => { e.target.disabled = true; try { const r = await call('refresh'); toast('Recalculated in ' + r.seconds + ' s'); await T.reload(); } catch (er) { fail(er); } e.target.disabled = false; };
+    $('recalc').onclick = async e => { e.target.disabled = true; try { const r = await call('refresh', {}, { timeout: 360000 }); (r.recon || []).forEach(l => toast(l)); toast('Recalculated in ' + r.seconds + ' s'); await T.reload(); } catch (er) { fail(er); } e.target.disabled = false; };
   } catch (e) { fail(e); }
 };
 // jurisdiction as mapped in TMS (collector, weekly) compared with the Jurisdiction Details file – the KPIs still use the file
-function jurCompareHtml(c) {
+function jurCompareHtml(c, src) {
   if (!c) return '<p class="small">Not received yet – the TMS Collector sends "Jurisdiction as mapped in TMS" with its weekly reports.</p>';
   const t = c.totals || {}; const km = m => (m / 1000).toFixed(3); const rng = x => `${km(x.a)}–${km(x.b)}`;
   const tab = (head, rows) => rows.length ? `<div class="scroll"><table class="t compact"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<p class="small muted">None.</p>';
-  return `<p class="small">Received ${esc(String(c.when).replace('T', ' ').slice(0, 16))}. TMS: <b>${t.tms?.units}</b> SSE in-charge, ${t.tms?.stretches} stretches, ${t.tms?.km} km · file: ${t.file?.units} units, ${t.file?.stretches} rows, ${t.file?.km} km. <b>The KPIs still use the file</b> – nothing is changed until you decide.</p>
+  return `<p class="small">Received ${esc(String(c.when).replace('T', ' ').slice(0, 16))}. TMS: <b>${t.tms?.units}</b> SSE in-charge, ${t.tms?.stretches} stretches, ${t.tms?.km} km · file: ${t.file?.units} units, ${t.file?.stretches} rows, ${t.file?.km} km. ${String(src || 'TMS').toUpperCase() === 'TMS' ? '<b>The KPIs and jobs use the TMS jurisdiction</b> (speed from the file) – setting JUR_SOURCE under KPI rules (File = the file only).' : '<b>The KPIs and jobs use the file</b> – setting JUR_SOURCE = File.'}</p>
     <h4>In TMS, not in the file (${t.onlyTmsKm} km)</h4>${tab(['Section', 'Line', 'km', 'Unit (TMS)'], (c.onlyTms || []).map(x => [x.section, x.line, rng(x), x.unit]))}
     <h4>In the file, not in TMS (${t.onlyFileKm} km)</h4>${tab(['Section', 'Line', 'km', 'Unit (file)'], (c.onlyFile || []).map(x => [x.section, x.line, rng(x), x.unit]))}
     <h4>Different unit (${t.unitDiffKm} km)</h4>${tab(['Section', 'Line', 'km', 'File', 'TMS'], (c.unitDiff || []).map(x => [x.section, x.line, rng(x), x.unit, x.other]))}
@@ -832,14 +837,10 @@ function jurCompareHtml(c) {
 async function cleanStartPanel() {
   const w = $('csw'); if (!w) return;
   try {
-    const p = await call('cleanStart', { preview: true, before: '2026-10-10' });
-    const by = Object.entries(p.byType).sort().map(([k, n]) => `${esc(k)} ${n}`).join(' · ') || 'none';
-    if (p.done) { w.innerHTML = `<p>Done: <b>${esc(p.done)}</b>.</p><p class="small muted">The clean start can be run only once. Closed jobs keep their rows and history.</p>`; return; }
-    w.innerHTML = `<p><b>${p.count}</b> open job(s) were created before 10-10-2026: ${by}.</p><p class="small">They will be <b>closed</b> with the reason "Closed by admin – clean start (created before 10-10-2026)". Nothing is deleted – rows and history stay. The <b>${p.trcKept}</b> open TRC jobs stay open. Right after, the jobs are recalculated: every item still open in the latest TMS lists comes back as a <b>fresh job</b> (new job number, created today). This can be done only once.</p><div class="row"><button class="btn primary" id="csGo" ${p.count ? '' : 'disabled'}>Clean start…</button></div>`;
-    $('csGo').onclick = () => modal(`<h3>Clean start: close ${p.count} job(s)</h3><p>${by}</p><p>TRC jobs stay open. Fresh jobs are made for items still open in TMS. Type <b>CLEAN START</b> to confirm.</p><div class="fld"><input id="csC" autocomplete="off"></div>`, async () => {
-      if ($('csC').value.trim() !== 'CLEAN START') { toast('Type CLEAN START to confirm', true); return false; }
-      try { const r = await call('cleanStart', { before: '2026-10-10', confirm: 'CLEAN START' }, { timeout: 360000 }); toast(`${r.closed} job(s) closed, ${r.fresh} fresh job(s) made`); await T.reload(); cleanStartPanel(); } catch (e) { fail(e); return false; }
-    }, 'Close and rebuild');
+    const p = await call('cleanStart', { preview: true, before: S.B.today });
+    w.innerHTML = `<p class="small">Close every open job created before a date you choose (all units, or use "Close jobs created before a date…" on All jobs for one type / unit). Nothing is deleted. Items still open in the latest TMS reports come back as fresh jobs. TRC and chronic jobs stay open unless you tick them.</p>
+      <p class="small">Open jobs created before today: <b>${p.count}</b>${p.trcKept ? ` (+ ${p.trcKept} TRC / chronic)` : ''}.${p.done ? ` Last run: ${esc(String(p.done).split(' | ')[0])}.` : ''}</p><div class="row"><button class="btn primary" id="csGo">Close jobs created before a date…</button></div>`;
+    $('csGo').onclick = () => T.closeByDate({ before: p.done ? S.B.today : '2026-10-10', done: () => cleanStartPanel() });
   } catch (e) { w.innerHTML = `<p class="od">${esc(e.error || e.message || e)}</p>`; }
 }
 V.uploads = async el => {
