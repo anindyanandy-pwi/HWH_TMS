@@ -205,7 +205,7 @@ window.TMSC.pageHead = pageHead;
 const prTag = p => `<span class="tag t${+p || 4}">${+p === 1 ? 'P1 Urgent' : 'P' + (+p || 4)}</span>`;
 window.TMSC.prTag = prTag;
 const gone = j => j.TmsGone && isOpen(j) || (j.TmsGone && (j.Status === 'Done' || j.Status === 'With SSE'));
-const goneTag = j => gone(j) ? `<span class="od" title="TMS no longer shows this job; it stays open here until the SSE / AEN confirm">Closed in TMS, not here (since ${dmy(j.TmsGone)})</span>` : '';
+const goneTag = j => gone(j) ? `<span class="od" title="TMS no longer shows this job; the work recorded here waits for the SSE / AEN – their approval closes it">Closed in TMS, not here (since ${dmy(j.TmsGone)})</span>` : '';
 window.TMSC.goneTag = goneTag;
 function jobCard(j) {
   return `<div class="jc p${+j.Priority || 4}" data-job="${esc(j.JobId)}"><div class="row">${prTag(j.Priority)}<span class="${stc(j.Status)}">${esc(j.Status)}</span>${goneTag(j)}${j.Overdue ? `<span class="od">Overdue (${j.Overdue === 'AEN' ? 'approval' : 'target ' + dmy(j.Target)})</span>` : ''}<span class="muted right">${esc(j.TypeName)}</span></div>
@@ -271,7 +271,7 @@ VIEWS.insp = el => {
   if (!R.length) { el.innerHTML = head + `<div class="panel body"><div class="empty">No inspection pending${S.unit !== '__all' ? ' for ' + esc(S.unit) : ''}.</div></div>`; return; }
   const sec = Object.keys(REMIND).map(k => { const L = R.filter(x => x.Kind === k).sort((a, b) => String(a.Due || '9').localeCompare(String(b.Due || '9')) || String(a.Unit).localeCompare(String(b.Unit)) || (+a.Pos || 0) - (+b.Pos || 0)); if (!L.length) return '';
     const od = L.filter(x => x.Overdue === 'Yes').length;
-    return `<div class="panel body"><h3 style="margin:0 0 8px">${esc(REMIND[k])} <span class="muted small">${L.length}${od ? ` · <span class="od">${od} overdue</span>` : ''}</span></h3><div class="scroll"><table class="t"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th><th>Detail</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.Unit)}</td><td>${esc(x.Title)}</td><td>${esc(x.Location)}</td><td>${dmy(x.Due)}${x.Overdue === 'Yes' || (x.Due && String(x.Due).slice(0, 10) < t) ? '<br><span class="od">overdue</span>' : ''}</td><td class="small">${esc(x.Detail)}</td></tr>`).join('')}</tbody></table></div></div>`; }).join('');
+    return `<div class="panel body"><h3 style="margin:0 0 8px">${esc(REMIND[k])} <span class="muted small">${L.length}${od ? ` · <span class="od">${od} overdue</span>` : ''}</span></h3><div class="scroll"><table class="t"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th><th>Detail</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.Unit)}</td><td>${esc(x.Title)}</td><td>${esc(x.Location)}</td><td>${dmy(x.Due)}${x.Overdue === 'Yes' || (x.Kind !== 'K1-INSP' && x.Due && String(x.Due).slice(0, 10) < t) ? '<br><span class="od">overdue</span>' : ''}</td><td class="small">${esc(x.Detail)}</td></tr>`).join('')}</tbody></table></div></div>`; }).join('');
   el.innerHTML = head + sec;
 };
 VIEWS.jobs = el => {
@@ -379,7 +379,7 @@ VIEWS.kpi = el => {
 // ---------- KPI cell: what the figures mean (16-Oct: "I cannot understand what these mean") ----------
 const KPI_VALUE = { K1: '% of scheduled inspections overdue (weighted)', K2: 'Average % of the jurisdiction NOT covered per fortnight', K3: '% of the jurisdiction NOT covered in the two months', K10: '% of defects pending more than 10 days', K11: '% of IMRs removed after more than 3 days', K12: '% of new AT welds defective at the first test', K13: '% of AT welds awaiting joggled plates', K14: '% of DFWR (older than 90 days) removed', K15: '% of FP joints overdue for oiling & greasing', K16: 'Field visit days' };
 function kpiRule(k) {
-  const d = (S.B.kpiDefs || {})[k] || {}; const R = { K1: 'P&C 30 %, curves 30 %, LWR 20 %, LC 20 % – % overdue on the last day of the month (due that day is not overdue)', K2: 'whole jurisdiction to be covered by foot plate / rear vehicle in 1st–15th and in 16th–month end; average shortfall of the two', K3: 'whole jurisdiction by push trolley (on foot allowed where speed > 110 km/h) in the previous two months', K16: 'distinct days with an inspection recorded in TMS by the SSE in-charge' }[k] || '';
+  const d = (S.B.kpiDefs || {})[k] || {}; const R = { K1: 'P&C 30 %, curves 30 %, LWR 20 %, LC 20 % – % overdue on the 1st of the month (due that day is not overdue)', K2: 'whole jurisdiction to be covered by foot plate / rear vehicle in 1st–15th and in 16th–month end; average shortfall of the two', K3: 'whole jurisdiction by push trolley (on foot allowed where speed > 110 km/h) in the previous two months', K16: 'distinct days with an inspection recorded in TMS by the SSE in-charge' }[k] || '';
   if (k === 'K16') return R + '. Marks: 16 or more days → 4, 11–15 → 3, 7–10 → 2, fewer → 0';
   const b = d.bands || []; if (!b.length || d.kind !== 'short') return R;
   const parts = b.map((x, i) => i === 0 ? `0 % → ${x[1]}` : x[0] >= 1e9 ? `more → ${x[1]}` : `up to ${x[0]} % → ${x[1]}`);
@@ -392,7 +392,7 @@ function kpiExplain(k, x) {
   if (k === 'K1' && x.byType) {
     const nm = { PXING: 'P&C', CURVE: 'Curve', LWR: 'LWR', LXING: 'Level crossing' };
     return `<h4 style="margin:10px 0 4px">Assets in the Latest inspection report</h4>` + tbl(['Asset', 'Counted', 'Overdue', '% overdue', 'Never inspected', 'Overdue > 1 year (not counted)'], Object.entries(x.byType).map(([t, o]) => [nm[t] || t, o.n, o.over, o.n ? pct(o.over / o.n * 100) : '—', o.never || 0, o.stale || 0]))
-      + list('Overdue now', x.over, x.overN) + list('Falling due later this month – inspect them before they become overdue', x.soon, x.soonN)
+      + list('Overdue now', x.over, x.overN) + list('Falling due before the 1st – inspect them before they become overdue', x.soon, x.soonN)
       + `<p class="small muted">An inspection counts here once the "Latest inspection report" uploaded from TMS shows the new date.</p>`;
   }
   if (k === 'K2' && x.total != null) return tbl(['Fortnight', 'km covered', 'of km', '% short'], [['1st–15th', x.covered1 ?? (x.total - x.missing1), x.total, pct(x.f1)], ['16th–end', x.covered2 ?? (x.total - x.missing2), x.total, pct(x.f2)]])
