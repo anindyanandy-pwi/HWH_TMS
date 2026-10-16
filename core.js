@@ -2191,6 +2191,8 @@ function weldReg(rows) {
   }
   return { kind: 'weldReg', asOn: null, scope: { sections: [...new Set(recs.map(r => r.section))] }, records: recs };
 }
+// [E] K12 (TMS AT Welds Done/Defective report: "Defective % based on latest testing of welds done during the period"): latest USFD result other than good
+const weldDefective = res => { const s = String(res || '').trim(); return !!s && !/^(GW|OK|-|NIL|GOOD|UNTESTED|NOT TESTED)$/i.test(s) && !/untested/i.test(s); };
 // K13: welds that need joggled fish plates = new AT welds until tested + any defective weld (user's rule, 11.10.2026)
 function weldDigest(recs) {
   const needs = r => /untested/i.test(r.usfd) || (r.usfd && !/^(GW|-|OK)$/i.test(r.usfd)) || (r.at && (!r.usfdWeld || (r.date && r.usfdWeld < r.date)));
@@ -2199,8 +2201,8 @@ function weldDigest(recs) {
   const totals = Object.entries(tot).map(([k, n]) => { const [section, line, km] = k.split('|'); return { section, line, km: +km, count: n }; });
   // K12: AT welds done and tested per month (last two years) – the denominator of "% welds defective in initial testing"
   const mon = {}; const from = new Date(Date.now() - 730 * 864e5).toISOString().slice(0, 7);
-  for (const r of recs) { if (!r.at || !r.date || r.date.slice(0, 7) < from) continue; const k = [r.section, r.line, r.km, r.date.slice(0, 7)].join('|'); const o = mon[k] = mon[k] || { done: 0, tested: 0 }; o.done++; if (r.usfdWeld && r.usfdWeld >= r.date) o.tested++; }
-  const months = Object.entries(mon).map(([k, v]) => { const [section, line, km, month] = k.split('|'); return { section, line, km: +km, month, done: v.done, tested: v.tested }; });
+  for (const r of recs) { if (!r.at || !r.date || r.date.slice(0, 7) < from) continue; const k = [r.section, r.line, r.km, r.date.slice(0, 7)].join('|'); const o = mon[k] = mon[k] || { done: 0, tested: 0, defective: 0 }; o.done++; if (r.usfdWeld && r.usfdWeld >= r.date) { o.tested++; if (weldDefective(r.usfd)) o.defective++; } }
+  const months = Object.entries(mon).map(([k, v]) => { const [section, line, km, month] = k.split('|'); return { section, line, km: +km, month, done: v.done, tested: v.tested, defective: v.defective }; });
   // new AT welds not yet given their first USFD test (K12 reminder jobs)
   const untested = recs.filter(r => r.at && r.date && r.date.slice(0, 7) >= from && (!r.usfdWeld || r.usfdWeld < r.date)).map(r => ({ section: r.section, line: r.line, rail: r.rail, km: r.km, m: r.m, date: r.date, type: r.type, key: ['UT', r.section, r.line, r.rail, r.km, r.m, r.date].join('|') }));
   return { pending, totals, months, untested, needing: recs.filter(needs).length };
@@ -2273,7 +2275,7 @@ function parsePaste(kind, { tables, title }) {
   return null;
 }
 
-return { isMainOG, classifyKpiSheet, parseKpiSheet, weldDigest, tablesFromPaste, classifyPaste, parsePaste, isoDate: iso };
+return { isMainOG, classifyKpiSheet, parseKpiSheet, weldDefective, weldDigest, tablesFromPaste, classifyPaste, parsePaste, isoDate: iso };
 })();
 __m['tmstable.js'] = (function(){
 // Small HTML table reader that needs no browser DOM (used by the uploader and by the TMS Collector).
@@ -2439,7 +2441,19 @@ function pendingIMR(defects) {
   }).filter(r => r.tested);
 }
 
-return { isTrcKmPage, trcPageFromTables, usfdDefectsFromPage, atWeldsFromPage, rowsFromPage, usfdHistFromPage, pendingIMR, decode, htmlTables, htmlText, htmlTitle };
+// ---------- [E] K15: overdue oiling & greasing summary per SSE (FishPlateAnalysisSummary.jsp after "HWH", 16-Oct-2026) ----------
+// columns: Authority | main+loop total, overdue | main total, overdue | loop total, overdue. TMS's K15 counts main + loop line joints.
+function ogSumFromPage(html) {
+  const out = [];
+  for (const t of htmlTables(html)) for (const r of t) {
+    const a = String(r[0] || '').trim(); const m = /^SSE\/P\.?\s*WAY\/(.+)$/i.exec(a); if (!m) continue;
+    const n = r.slice(1, 7).map(N); if (n.length < 6 || n.some(x => x == null)) continue;
+    out.push({ unit: m[1].replace(/[^A-Za-z0-9]/g, '').toUpperCase(), total: n[0], overdue: n[1], mainTotal: n[2], mainOverdue: n[3], loopTotal: n[4], loopOverdue: n[5] });
+  }
+  const seen = new Set(); return out.filter(x => !seen.has(x.unit) && seen.add(x.unit));
+}
+
+return { isTrcKmPage, trcPageFromTables, usfdDefectsFromPage, atWeldsFromPage, rowsFromPage, usfdHistFromPage, pendingIMR, ogSumFromPage, decode, htmlTables, htmlText, htmlTitle };
 })();
 __m['shotocr.js'] = (function(){
 // Screenshot reader for TMS web report pages (OMS peaks comparative summary, OMS accn. peaks, IMR testing history …).
@@ -2914,10 +2928,10 @@ const {unzip} = __m['zip.js'];
 const {classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest} = __m['tmsreports.js'];
 const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
-const {htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR} = __m['tmshtml.js'];
+const {htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage} = __m['tmshtml.js'];
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage };
 
 return { CORE };
 })();
