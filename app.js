@@ -39,17 +39,22 @@ async function call(fn, args, opt = {}) {
   if (r.access) denied(r.error, r.pending);
   throw r;
 }
+// sign-in / access screens: logo, product name in both languages, credit (redesign 16-Oct)
+function signinWrap(inner) {
+  document.body.classList.add('signedout'); const A = window.UI ? UI.APP : null;
+  return A ? `<div class="signin"><img class="slogo" src="${A.logo}" alt=""><h1>${A.name}</h1><div class="shi">${A.nameHi}</div><div class="sorg">${A.org} · ${A.orgHi}</div>${inner}<div class="creditcard">${UI.credit({ br: true, full: true })}</div></div>` : inner;
+}
 function denied(msg, pending) {
   $('rail').classList.add('hidden'); $('boot').classList.add('hidden'); $('banner').innerHTML = '';
   const m = esc(String(msg).replace(/^ACCESS(_PENDING)?:\s*/, ''));
-  $('views').innerHTML = pending
+  $('views').innerHTML = signinWrap(pending
     ? `<div class="denied" style="border-top-color:var(--warn)"><div class="eyebrow">New phone</div><h2>Waiting for approval</h2><p>${m}</p><p class="muted">Keep this app open or come back later – it checks again every 30 seconds.</p><button class="btn primary" id="reTry">Check now</button><p class="small muted" style="margin-top:14px">Phone: ${esc(UA)}</p></div>`
-    : `<div class="denied"><div class="eyebrow">Access</div><h2>Cannot open TMS Control</h2><p>${m}</p><button class="btn primary" id="toJoin">Sign in</button><p class="muted" style="margin-top:12px">Only users added by the division office can open this app.</p></div>`;
+    : `<div class="denied"><div class="eyebrow">Access</div><h2>Cannot open TMS Control</h2><p>${m}</p><button class="btn primary" id="toJoin">Sign in</button><p class="muted" style="margin-top:12px">Only users added by the division office can open this app.</p></div>`);
   if (!pending) $('toJoin').onclick = () => { try { localStorage.removeItem('tmsc.key'); localStorage.removeItem('tmsc.token'); } catch (e) { } TOKEN = ''; KEY = ''; joinScreen(); };
   if (pending) { $('reTry').onclick = () => location.reload(); clearTimeout(window.__retryT); window.__retryT = setTimeout(() => location.reload(), 30000); }
 }
 const fail = e => toast((e && e.error) || (e && e.message) || String(e), true);
-function toast(msg, bad) { const t = document.createElement('div'); t.className = 'tip'; t.style.cssText = `left:50%;top:60px;transform:translateX(-50%);background:${bad ? '#c62828' : '#14181f'};pointer-events:auto;z-index:200`; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), bad ? 6000 : 2800); }
+function toast(msg, bad) { const t = document.createElement('div'); t.className = 'tip'; t.style.cssText = `left:50%;top:70px;transform:translateX(-50%);${bad ? 'background:var(--crit);color:#fff;' : ''}pointer-events:auto;z-index:200;border-radius:12px;padding:10px 16px`; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), bad ? 6000 : 2800); }
 function modal(html, onOk, okText = 'OK') {
   $('modalBody').innerHTML = html; $('modal').classList.remove('hidden'); $('modalOk').textContent = okText; $('modalOk').classList.toggle('hidden', !onOk);
   $('modalOk').disabled = false;
@@ -83,7 +88,7 @@ window.TMSC.isOpen = isOpen; window.TMSC.inUnit = inUnit; window.TMSC.role = () 
 // ---------- sign in on the common link (the plain app address): mobile number + name + designation, no approval ----------
 async function joinScreen() {
   $('rail').classList.add('hidden'); $('boot').classList.add('hidden'); $('banner').innerHTML = '';
-  const draw = inner => { $('views').innerHTML = `<div class="denied" style="max-width:520px"><div class="eyebrow">HWH TMS Control · Howrah Division</div><h2>Sign in</h2>${inner}<p class="small muted" style="margin-top:16px">Phone: ${esc(UA)}</p></div>`; };
+  const draw = inner => { $('views').innerHTML = signinWrap(`<div class="denied"><h2>${window.UI ? UI.title('Sign in') : 'Sign in'}</h2>${inner}<p class="small muted" style="margin-top:16px">Phone: ${esc(UA)}</p></div>`); };
   draw('<div class="empty">Loading…</div>');
   let O; try { O = await call('joinOptions'); } catch (e) { draw(`<p class="od">${esc((e && e.error) || e)}</p><button class="btn primary" onclick="location.reload()">Try again</button>`); return; }
   const v = { mobile: '', name: '', post: '', charge: '' };
@@ -121,7 +126,8 @@ async function boot() {
     const u = S.B.user; $('who').classList.remove('hidden'); $('whoRole').textContent = u.RoleName; $('whoName').textContent = u.Name; $('whoScope').textContent = u.Scope ? '· ' + u.Scope : '';
     fillUnits();
     $('selUnit').onchange = () => { S.unit = $('selUnit').value; render(); };
-    $('railFoot').innerHTML = `${esc(S.B.app.name)} v${esc(S.B.app.version)} · app ${esc(CFG.VERSION || '')}<br>Today ${dmy(S.B.today)}`;
+    if (window.UI) UI.defaultLang(u.Role);
+    $('railFoot').innerHTML = (window.UI ? UI.credit({ br: true }) + '<div style="margin-top:6px">' : '<div>') + `v${esc(S.B.app.version)} · app ${esc(CFG.VERSION || '')} · today ${dmy(S.B.today)}</div>`;
     S.view = (NAVS[role()] || NAVS.VIEWER)[0][0];
     $('rail').classList.remove('hidden');
     if (role() === 'ADMIN') await loadAdmin();
@@ -157,7 +163,8 @@ async function loadAll() {
   $('btnReload').disabled = false;
 }
 $('btnReload').onclick = () => loadAll();
-$('btnHelp').onclick = () => modal(helpHtml());
+if (window.UI) { $('btnReload').innerHTML = UI.svg('refresh') + `<span class="tl">${UI.t('Refresh')}</span>`; $('btnReload').setAttribute('aria-label', 'Refresh'); $('btnHelp').innerHTML = UI.svg('help') + `<span class="tl">${UI.t('Help')}</span>`; $('btnHelp').setAttribute('aria-label', 'Help'); }
+$('btnHelp').onclick = () => modal((window.UI ? UI.about() + '<hr style="border:0;border-top:1px solid var(--line);margin:16px 0">' : '') + helpHtml());
 window.addEventListener('online', () => { setNet(true); if (window.TMSC_FIELD) window.TMSC_FIELD.flush(); });
 
 // pending-review banner – on every screen from SSE upwards, so finished work never sits unreviewed
@@ -183,7 +190,7 @@ function banner() {
 function nav() {
   const N = NAVS[role()] || NAVS.VIEWER; const J = S.jobs.filter(inUnit); const p = S.B.pending || {};
   const cnt = { insp: rems().length || '', work: J.filter(isOpen).length, review: p.review || ((p.sse || 0) + (p.aen || 0)) || '', urgent: J.filter(j => j.Overdue || (isOpen(j) && +j.Priority === 1)).length, jobs: J.filter(isOpen).length, chronic: J.filter(j => j.Type === 'CHRONIC' && isOpen(j)).length, plan: J.filter(j => /TRC-(TAMP|RISK|THROUGH|DS)/.test(j.Type) && isOpen(j)).length, phones: p.devices || '' };
-  $('nav').innerHTML = N.map(x => x[0][0] === '#' ? `<div class="navgrp">${x[0].slice(1)}</div>` : `<button data-k="${x[0]}" class="${x[0] === S.view ? 'on' : ''}"><span>${x[1]}</span><span class="cnt${(x[0] === 'urgent' || x[0] === 'review' || x[0] === 'phones') && cnt[x[0]] ? ' crit' : ''}">${cnt[x[0]] ?? ''}</span></button>`).join('');
+  $('nav').innerHTML = N.map(x => x[0][0] === '#' ? `<div class="navgrp">${window.UI ? UI.t(x[0].slice(1)) : x[0].slice(1)}</div>` : `<button data-k="${x[0]}" class="${x[0] === S.view ? 'on' : ''}">${window.UI ? UI.navIcon(x[0]) : ''}${(b => `<span class="nl"><span class="p">${b.p}</span>${b.s ? `<span class="s">${b.s}</span>` : ''}</span>`)(window.UI ? UI.bi(x[1]) : { p: x[1], s: '' })}<span class="cnt${(x[0] === 'urgent' || x[0] === 'review' || x[0] === 'phones') && cnt[x[0]] ? ' crit' : ''}">${cnt[x[0]] ?? ''}</span></button>`).join('');
   $('nav').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.k; S.f = {}; S.sel = new Set(); render(); window.scrollTo(0, 0); };
 }
 function render() {
@@ -191,7 +198,7 @@ function render() {
   const v = VIEWS[S.view] || VIEWS.jobs; $('views').innerHTML = `<div class="view on" id="v_${S.view}"></div>`;
   try { const r = v($('v_' + S.view)); if (r && r.catch) r.catch(e => fail(e)); } catch (e) { console.error(e); $('v_' + S.view).innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
 }
-function pageHead(title, crumbs, extra = '') { return `<div class="pagehead"><div class="crumbs">${crumbs || 'Howrah Division'}</div><div class="phrow"><h1>${title}</h1>${extra}</div></div>`; }
+function pageHead(title, crumbs, extra = '') { return `<div class="pagehead"><div class="crumbs">${crumbs || 'Howrah Division'}</div><div class="phrow"><h1>${window.UI ? UI.title(title) : title}</h1>${extra}</div></div>`; }
 window.TMSC.pageHead = pageHead;
 
 // ---------- job list helpers ----------
@@ -245,7 +252,7 @@ VIEWS.work = el => {
   ];
   const u = S.unit === '__all' ? 'All my units' : 'Unit ' + S.unit;
   el.innerHTML = pageHead('My work', u, `<span class="muted right">${J.filter(isOpen).length} open · ${J.filter(j => j.Overdue).length} overdue</span>`) + kpiStrip() +
-    groups.filter(g => g[1].length).map(g => `<h3 class="sec" style="margin:18px 0 8px;background:none;border:none;padding:0">${g[0]} <span class="muted">(${g[1].length})</span></h3><div class="cards">${g[1].sort((a, b) => gain(b) - gain(a) || (+a.Priority || 4) - (+b.Priority || 4) || String(a.Target).localeCompare(String(b.Target))).slice(0, 200).map(jobCard).join('')}</div>`).join('') +
+    groups.filter(g => g[1].length).map(g => `<h3 class="sec" style="margin:18px 0 8px;background:none;border:none;padding:0">${(b => b.p + (b.s ? ` <span class="small" style="font-weight:500">· ${b.s}</span>` : ''))(window.UI ? UI.bi(g[0]) : { p: g[0], s: '' })} <span class="muted">(${g[1].length})</span></h3><div class="cards">${g[1].sort((a, b) => gain(b) - gain(a) || (+a.Priority || 4) - (+b.Priority || 4) || String(a.Target).localeCompare(String(b.Target))).slice(0, 200).map(jobCard).join('')}</div>`).join('') +
     (J.filter(isOpen).length || J.some(j => j.Status === 'Done') ? '' : `<div class="empty">No open work. Well done.</div>`);
 };
 function kpiRow(unit) { return (S.kpi?.kpi || []).filter(k => k.Unit === unit && k.Basis === 'This month').sort((a, b) => String(b.Period).localeCompare(String(a.Period)))[0]; }
@@ -254,7 +261,7 @@ function kpiStrip() {
   if (S.unit === '__all' || !S.kpi) return '';
   const r = kpiRow(S.unit); if (!r) return ''; const st = S.kpi.standings || []; const rank = st.findIndex(x => x.unit === S.unit) + 1;
   const low = Object.keys(S.B.kpiNames).filter(k => r[k] !== '' && r[k] != null && +r[k] < ((S.B.kpiDefs || {})[k] || {}).max);
-  return `<div class="kpis"><div class="kpi ${r.Total >= 78 ? 'ok' : r.Total >= 70 ? 'warn' : 'crit'}" data-go="position" style="cursor:pointer"><div class="l">KPI forecast (this month)</div><div class="v">${r.Total}<small>/ 82</small></div><div class="s">${rank ? `Rank ${rank} of ${st.length} · ` : ''}${low.length ? 'losing marks in ' + low.join(', ') : 'full marks on all items with data'} – tap for what to do</div></div></div>`;
+  return `<div class="kpis single"><div class="kpi ${r.Total >= 78 ? 'ok' : r.Total >= 70 ? 'warn' : 'crit'}" data-go="position" style="cursor:pointer;display:flex;gap:16px;align-items:center">${window.UI ? UI.ring(r.Total, 82, { size: 76 }) : ''}<div style="flex:1;min-width:0"><div class="l">KPI forecast (this month)</div><div class="v">${r.Total}<small>/ 82</small></div><div class="s">${rank ? `Rank ${rank} of ${st.length} · ` : ''}${low.length ? 'losing marks in ' + low.join(', ') : 'full marks on all items with data'} – tap for what to do</div></div></div></div>`;
 }
 document.addEventListener('click', e => { const g = e.target.closest('.kpis [data-go]'); if (g) { S.view = g.dataset.go; render(); } });
 VIEWS.done = el => { const J = S.jobs.filter(j => inUnit(j) && !isOpen(j)); const F = filters(J); el.innerHTML = pageHead('Done & closed', 'Last 45 days') + `<div class="panel body">${F.bar}${jobTable(F.out)}</div>`; wireFilters(el); };
@@ -328,10 +335,21 @@ VIEWS.overview = el => {
   const kp = {}; for (const k of (S.kpi?.kpi || [])) if (k.Basis === 'This month' && inUnit(k)) { const g = level === 'Unit' ? k.Unit : level === 'AEN' ? unitMeta[k.Unit]?.aen : unitMeta[k.Unit]?.srden; (kp[g] = kp[g] || []).push(+k.Total || 0); }
   const avg = a => a && a.length ? (a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : '—';
   const tot = Object.values(groups).reduce((a, o) => { for (const k of ['open', 'od', 'p1', 'wait', 'odA', 'done', 'gone']) a[k] = (a[k] || 0) + o[k]; return a; }, {});
+  // redesign 16-Oct: division average ring + number cards, then one card per Sr DEN / AEN / unit with its own ring
+  const allK = Object.values(kp).flat(); const divAvg = allK.length ? allK.reduce((x, y) => x + y, 0) / allK.length : null;
+  const B = s => window.UI ? UI.bi(s) : { p: s, s: '' }; const lab = s => { const b = B(s); return `${esc(b.p)}${b.s ? ` <span class="small" style="font-weight:500;opacity:.8">· ${esc(b.s)}</span>` : ''}`; };
+  const ring = (v, max, o) => window.UI ? UI.ring(v, max, o) : '';
+  const card = (cls, id, l, v, s) => { const b = B(l); return `<div class="kpi ${cls}"${id ? ` id="${id}" style="cursor:pointer"` : ''}><div class="l">${esc(b.p)}</div>${b.s ? `<div class="lh">${esc(b.s)}</div>` : ''}<div class="v">${v}</div><div class="s">${s}</div></div>`; };
+  const grpTitle = level === 'Unit' ? 'Units in your charge' : level === 'AEN' ? 'AEN jurisdictions' : 'Sr DEN jurisdictions';
   el.innerHTML = pageHead(r === 'AEN' ? 'Units' : r === 'SRDEN' ? 'Overview' : 'Division overview', scopeText()) +
-    `<div class="kpis"><div class="kpi ${tot.od ? 'crit' : 'ok'}"><div class="l">Open jobs</div><div class="v">${tot.open || 0}</div><div class="s">${tot.od || 0} overdue at SSE</div></div><div class="kpi ${tot.p1 ? 'crit' : 'ok'}"><div class="l">Urgent (SR)</div><div class="v">${tot.p1 || 0}</div><div class="s">UML defects / overdue inspections</div></div><div class="kpi ${tot.odA ? 'warn' : 'ok'}"><div class="l">Work waiting for review</div><div class="v">${tot.wait || 0}</div><div class="s">${tot.odA || 0} beyond approval time</div></div><div class="kpi acc"><div class="l">Approved this month</div><div class="v">${tot.done || 0}</div><div class="s">since ${dmy(m0)}</div></div><div class="kpi ${tot.gone ? 'crit' : 'ok'}" id="kGone" style="cursor:pointer"><div class="l">Closed in TMS, not here</div><div class="v">${tot.gone || 0}</div><div class="s">open here although TMS shows them closed – not updated in the app</div></div></div>` + reconPanel() +
-    `<div class="panel body"><div class="scroll"><table class="t"><thead><tr><th>${level === 'SrDEN' ? 'Sr DEN' : level}</th><th>Open</th><th>Overdue (SSE)</th><th>Urgent open</th><th>Waiting review</th><th>Overdue (AEN)</th><th>Approved this month</th><th>Closed in TMS, not here</th><th>KPI forecast (avg of units)</th></tr></thead><tbody>${Object.entries(groups).sort().map(([g, o]) => `<tr data-g="${esc(g)}" style="cursor:pointer"><td class="nw"><b>${esc(g)}</b></td><td class="n">${o.open}</td><td class="n">${o.od ? `<span class="od">${o.od}</span>` : 0}</td><td class="n">${o.p1}</td><td class="n">${o.wait}</td><td class="n">${o.odA ? `<span class="od">${o.odA}</span>` : 0}</td><td class="n">${o.done}</td><td class="n">${o.gone ? `<span class="od">${o.gone}</span>` : 0}</td><td class="n">${avg(kp[g])}</td></tr>`).join('')}</tbody></table></div></div>`;
-  el.querySelectorAll('tr[data-g]').forEach(tr => tr.onclick = () => { const g = tr.dataset.g; if (level === 'Unit') { S.unit = g; $('selUnit').value = g; } S.view = 'urgent'; render(); });
+    `<div class="ovtop"><div class="hero">${ring(divAvg == null ? null : +divAvg.toFixed(1), 82, { size: 132, stroke: 14, color: 'var(--accent)', sub: 'of 82' })}<div><div class="ht">${lab('KPI forecast')} · ${esc(S.basis === 'Last month' ? 'last month' : 'this month')}</div><div class="hh">${esc(B('Division average').p)}</div><div class="hs">${allK.length ? `average of ${allK.length} unit(s) at the present pace` : 'no KPI calculated yet – upload TMS data, then Recalculate'}</div></div></div>` +
+    `<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${card(tot.od ? 'crit' : 'ok', '', 'Open jobs', tot.open || 0, `${tot.od || 0} overdue at SSE`)}${card(tot.p1 ? 'crit' : 'ok', '', 'Urgent (SR)', tot.p1 || 0, 'UML defects / overdue inspections')}${card(tot.odA ? 'warn' : 'ok', '', 'Work waiting for review', tot.wait || 0, `${tot.odA || 0} beyond approval time`)}${card('acc', '', 'Approved this month', tot.done || 0, `since ${dmy(m0)}`)}${card(tot.gone ? 'crit' : 'ok', 'kGone', 'Closed in TMS, not here', tot.gone || 0, 'open here although TMS shows them closed – not updated in the app')}</div></div>` + reconPanel() +
+    `<div class="h2row"><h2>${esc(B(grpTitle).p)}${B(grpTitle).s ? ` <span>· ${esc(B(grpTitle).s)}</span>` : ''}</h2>${level !== 'Unit' && VIEWS.kpi && S.B.kpiNames ? `<a href="#" data-go2="kpi">KPI by unit ›</a>` : ''}</div>` +
+    `<div class="ucards">${Object.entries(groups).sort().map(([g, o]) => { const a = kp[g] && kp[g].length ? kp[g].reduce((x, y) => x + y, 0) / kp[g].length : null; const us = [...o.units].filter(Boolean).sort();
+      return `<button type="button" class="ucard" data-g="${esc(g)}"><div class="uh">${ring(a == null ? null : Math.round(a), 82, { size: 54 })}<div style="min-width:0"><div class="un">${esc(g)}</div><div class="us">${esc(level === 'Unit' ? (unitMeta[g]?.label || '') : us.join(' · '))}</div></div></div>
+        <div class="uf"><div><b>${o.open}</b>${esc(B('open').p)}</div><div><b class="${o.od ? 'c' : ''}">${o.od}</b>${esc(B('overdue').p)}</div><div><b>${o.p1}</b>${esc(B('urgent').p)}</div><div><b>${o.wait}</b>${esc(B('in review').p)}${o.odA ? ` <span class="od">(${o.odA} late)</span>` : ''}</div><div><b>${o.done}</b>${esc(B('approved').p)}</div>${o.gone ? `<div><b class="c">${o.gone}</b>closed in TMS</div>` : ''}</div></button>`; }).join('') || '<div class="empty">No jobs yet.</div>'}</div>`;
+  el.querySelectorAll('[data-go2]').forEach(a => a.onclick = e => { e.preventDefault(); S.view = a.dataset.go2; render(); });
+  el.querySelectorAll('.ucard[data-g]').forEach(tr => tr.onclick = () => { const g = tr.dataset.g; if (level === 'Unit') { S.unit = g; $('selUnit').value = g; } S.view = 'urgent'; render(); });
   if ($('kGone') && VIEWS.jobs) $('kGone').onclick = () => { S.f.st = 'tmsgone'; S.view = 'jobs'; render(); };
   el.querySelectorAll('[data-rc]').forEach(b => b.onclick = () => modal(`<h3>Flag the jobs no longer in TMS</h3><p>${esc(b.dataset.txt)}</p><p>Confirm only if the upload was complete (all sections of this list came in). The jobs are then flagged "Closed in TMS, not here"; nothing is closed.</p>`, async () => {
     try { const r = await call('reconConfirm', { type: b.dataset.rc }, { timeout: 360000 }); toast('Done'); (r.recon || []).forEach(l => toast(l)); await loadAll(); } catch (e) { fail(e); return false; }

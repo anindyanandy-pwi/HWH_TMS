@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#14181f">
-<title>TMS Control</title>
+<meta name="theme-color" content="#F2F2F7">
+<title>Performance Report of SSE/P.Way · Howrah</title>
+<script>/* theme before first paint (design system, ui.js) */(function(){try{var p=localStorage.getItem("tmsc.theme")||"auto";var d=p==="dark"||(p==="auto"&&window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.setAttribute("data-theme",d?"dark":"light");document.documentElement.setAttribute("data-lang",localStorage.getItem("tmsc.lang")||"en");}catch(e){}})();</script>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/logo.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="styles.css?v=202610160608">
+<link rel="stylesheet" href="styles.css?v=202610160812">
 <script>
 // Files dropped anywhere on the page never open in the browser; they go to the Upload page (admin).
 window.__bootErrors = [];
@@ -23,8 +24,9 @@ window.addEventListener('error', function (e) { window.__bootErrors.push((e.mess
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="pname">TMS Control</span><span class="org">Engineering · Howrah Division</span></div>
+  <div class="brand"><img class="logo" src="icons/logo.png" alt=""><span class="bt"><span class="pname">SSE/P.Way Performance Report</span><span class="org">एसएसई/रेल पथ कार्य-निष्पादन रिपोर्ट · Howrah Division</span></span></div>
   <div class="actions">
+    <div id="uiTools" class="row" style="gap:6px;flex-wrap:nowrap"></div>
     <div class="who hidden" id="who"><span class="rolechip" id="whoRole"></span><b id="whoName"></b><span id="whoScope"></span></div>
     <button class="tb small hidden" id="btnSync" title="Records waiting to upload"></button>
     <button class="tb small" id="btnReload" title="Reload data">Refresh</button>
@@ -39,7 +41,7 @@ window.addEventListener('error', function (e) { window.__bootErrors.push((e.mess
     <div class="railfoot" id="railFoot"></div>
   </aside>
   <main id="main">
-    <div id="boot" class="busy"><div class="eyebrow">Loading</div><h2>Opening TMS Control…</h2><div class="bar"><div style="width:40%"></div></div></div>
+    <div id="boot" class="busy"><div class="eyebrow">Loading</div><h2>Opening…</h2><div class="bar"><div style="width:40%"></div></div></div>
     <div id="banner"></div>
     <div id="views"></div>
   </main>
@@ -48,11 +50,12 @@ window.addEventListener('error', function (e) { window.__bootErrors.push((e.mess
 <div id="modal" class="modal hidden"><div class="modalbox"><div id="modalBody"></div><div class="modalbtns"><button id="modalCancel" class="btn secondary">Close</button><button id="modalOk" class="btn primary">OK</button></div></div></div>
 <div id="dropveil" class="dropveil hidden"><div>Release to load files</div></div>
 <div id="tip" class="tip hidden"></div>
-<script src="config.js?v=202610160608"></script>
-<script src="store.js?v=202610160608"></script>
-<script src="stations.js?v=202610160608"></script>
-<script src="app.js?v=202610160608"></script>
-<script src="field.js?v=202610160608"></script>
+<script src="config.js?v=202610160812"></script>
+<script src="store.js?v=202610160812"></script>
+<script src="ui.js?v=202610160812"></script>
+<script src="stations.js?v=202610160812"></script>
+<script src="app.js?v=202610160812"></script>
+<script src="field.js?v=202610160812"></script>
 <script>
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(function () {});
 </script>

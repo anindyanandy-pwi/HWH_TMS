@@ -1,15 +1,25 @@
 {
-  "name": "HWH TMS Control",
-  "short_name": "TMS Control",
-  "description": "Howrah Division track work – jobs, work records and KPI",
+  "name": "Performance Report of SSE/P.Way – Howrah Division",
+  "short_name": "SSE Report",
+  "description": "Performance Report of SSE/P.Way (वरिष्ठ खंड अभियंता/रेल पथ का कार्य-निष्पादन प्रतिवेदन) – jobs, work records and KPI, Howrah Division",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f2f3f5",
-  "theme_color": "#14181f",
+  "background_color": "#F2F2F7",
+  "theme_color": "#F2F2F7",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }
