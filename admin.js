@@ -717,6 +717,7 @@ async function addCollected(items) {
       if (it.type === 'ogSum') { const recs = C.ogSumFromPage(it.html); if (recs.length) W.sets.push({ kind: 'ogSum', records: recs, scope: { division: true }, asOn: S.B.today, file: it.name }); continue; }   // [E] 16-Oct (K15)
       if (it.type === 'atWelds') { const recs = C.atWeldsFromPage(it.html, it.period); if (recs.length) W.sets.push({ kind: 'atWelds', records: recs, scope: { division: true }, asOn: S.B.today, file: it.name }); continue; }
       if (it.type === 'jurisdictionTms') { const recs = jurTmsRecords(it); if (recs.some(r => r.rowType === 'stretch')) W.sets.push({ kind: 'tmsJurisdiction', records: recs, scope: { division: true }, asOn: it.asOn || S.B.today, file: it.name }); else W.notes.push(`${it.name}: no jurisdiction rows`); continue; }
+      if (it.type === 'gmt' || it.type === 'tmsChart' || it.health) { W.notes.push(`${it.name || it.type}: kept for track health – not read yet`); continue; }   // [C] 16-Oct: issue 16 (a)(b), never sent to the server
       if (it.type === 'official') { const r = C.parseKpiSheet('official', C.rowsFromPage(it.html), ''); if (r && r.records.length && r.records[0].unit) { r.file = it.name; W.sets.push(r); } else W.notes.push(`${it.name}: score page not recognised`); continue; }
     } catch (e) { W.notes.push(`${it.name || it.type}: could not read – ${e.message || e}`); }
   }
