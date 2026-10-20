@@ -2455,6 +2455,453 @@ function ogSumFromPage(html) {
 
 return { isTrcKmPage, trcPageFromTables, usfdDefectsFromPage, atWeldsFromPage, rowsFromPage, usfdHistFromPage, pendingIMR, ogSumFromPage, decode, htmlTables, htmlText, htmlTitle };
 })();
+__m['kpi.js'] = (function(){
+// KPI engine – SSE/P-Way In-charge Performance Matrix (TMS KPI calculation method).
+// Pure functions: used in the admin browser and in Apps Script (bundled).
+const {sectionName, sectionCode, lineKey} = __m['names.js'];
+
+// ---------- mark bands (KPI calculation method PDF) ----------
+const SHORT5 = [[0, 5], [5, 4], [15, 3], [25, 2], [Infinity, 0]];          // % shortfall -> marks (0 exactly = max)
+const RED5 = [[0, 0], [10, 2], [25, 3], [Infinity, 5]];                     // % reduction (<=0 -> 0)
+const KPI = {
+  K1: { max: 10, name: 'Scheduled inspections (P&C, curve, LWR, LC)', bands: [[0, 10], [1, 8], [2, 5], [5, 2], [Infinity, 0]], kind: 'short' },
+  K2: { max: 5, name: 'Foot plate / rear vehicle inspection', bands: SHORT5, kind: 'short' },
+  K3: { max: 5, name: 'On foot / push trolley inspection', bands: SHORT5, kind: 'short' },
+  K4: { max: 5, name: 'Bridge inspection', bands: SHORT5, kind: 'short' },
+  K5: { max: 5, name: 'Rail fractures (reduction)', bands: RED5, kind: 'red' },
+  K6: { max: 5, name: 'Weld fractures (reduction)', bands: RED5, kind: 'red' },
+  K7: { max: 5, name: 'Repeated OMS peak locations (reduction)', bands: RED5, kind: 'red' },
+  K8: { max: 5, name: 'UML peaks – TRC (reduction)', bands: RED5, kind: 'red' },
+  K9: { max: 5, name: 'CBML blocks – TRC (reduction)', bands: RED5, kind: 'red' },
+  K10: { max: 5, name: 'Defects pending > 10 days', bands: SHORT5, kind: 'short' },
+  K11: { max: 5, name: 'IMRs removed after > 3 days', bands: SHORT5, kind: 'short' },
+  K12: { max: 5, name: 'Defective welds in initial testing', bands: [[0, 5], [0.5, 4], [1, 3], [2, 2], [Infinity, 0]], kind: 'short' },
+  K13: { max: 5, name: 'Joggling of AT welds pending', bands: [[0, 5], [0.1, 4], [0.15, 3], [0.25, 2], [Infinity, 0]], kind: 'short' },
+  K14: { max: 4, name: 'DFWR > 90 days removed', bands: [[4.999, 0], [10, 1], [15, 2], [25, 3], [Infinity, 4]], kind: 'removed' },
+  K15: { max: 4, name: 'Overdue oiling & greasing of FP joints', bands: [[0, 4], [5, 3], [15, 2], [25, 1], [Infinity, 0]], kind: 'short' },
+  K16: { max: 4, name: 'Field visit days', kind: 'days' },
+};
+function marks(k, v) {
+  const d = KPI[k]; if (v == null || isNaN(v)) return null;
+  if (d.kind === 'days') return v >= 16 ? 4 : v >= 11 ? 3 : v >= 7 ? 2 : 0;
+  if (d.kind === 'red') { if (v <= 0) return 0; for (const [lim, m] of d.bands.slice(1)) if (v <= lim) return m; return d.max; }
+  if (d.kind === 'removed') { for (const [lim, m] of d.bands) if (v <= lim) return m; return d.max; }
+  const r = Math.round(v * 1000) / 1000;
+  if (r <= 0) return d.bands[0][1];
+  for (const [lim, m] of d.bands.slice(1)) if (r <= lim) return m;
+  return 0;
+}
+// % reduction used by K5–K9: (previous - current) / previous. No previous and no current = full marks (nothing to reduce).
+function reduction(prev, cur) { if (!prev) return cur ? -100 : 100; return (prev - cur) / prev * 100; }
+
+// ---------- jurisdiction ----------
+const normUnit = u => String(u || '').toUpperCase().replace(/\s+/g, '').replace(/^SSE\/P\.?WAY\//, '').replace(/[^A-Z0-9]/g, '');
+// unit of an official from designation: SSE/P.WAY/BWN(W) -> BWNW (in-charge), JE/PW/1/BMG -> BMG
+function desigUnit(desig) { const d = String(desig || '').toUpperCase().replace(/\s+/g, ''); const m = d.match(/^(SSE|JE)\/(?:P\.?WAY|PW)\/(?:\d+\/|ML\/|YD\/|SEC\/)?(.+)$/); return m ? m[2].replace(/\/SEC$/, '').replace(/[^A-Z0-9]/g, '') : null; }
+const isInCharge = desig => /^SSE\/P\.?WAY\/[^\/]+$|^SSE\/P\.?WAY\/[A-Z]+\([A-Z]+\)$/.test(String(desig || '').toUpperCase().replace(/\s+/g, ''));
+
+// rows: Jurisdiction Details sheet rows (header in first 2 rows). Returns {units:[{srden,aen,unit,segs}], byUnit}
+function buildJurisdiction(rows) {
+  const units = new Map(); let sd = '', aen = '', unit = '', lastSpeed = {};
+  for (const r of rows) {
+    if (!r || r.length < 11) continue;
+    const km1 = r[7], km2 = r[9];
+    if (typeof km1 !== 'number' || typeof km2 !== 'number') { if (r[0]) sd = String(r[0]).trim(); if (r[1]) aen = String(r[1]).trim(); if (r[2]) unit = String(r[2]).trim(); continue; }
+    if (r[0]) sd = String(r[0]).trim(); if (r[1]) aen = String(r[1]).trim(); if (r[2]) unit = String(r[2]).trim();
+    const u = normUnit(unit); if (!u) continue;
+    const sec = sectionName(String(r[3] || '').trim()); const line = lineKey(String(r[5] || '').trim());
+    const sk = u + '|' + sec; let speed = typeof r[12] === 'number' ? r[12] : null; if (speed != null) lastSpeed[sk] = speed; else speed = lastSpeed[sk] ?? null;
+    if (!units.has(u)) units.set(u, { srden: sd, aen, unit: u, label: unit.replace(/\s+/g, ''), segs: [] });
+    units.get(u).segs.push({ section: sec, sectionCode: String(r[4] || '').trim(), line, lineName: String(r[5] || '').trim(), a: km1 * 1000 + (+r[8] || 0), b: km2 * 1000 + (+r[10] || 0), lengthKm: +r[11] || null, speed });
+  }
+  // second pass: speed missing for a whole unit-section -> take the section's speed from any unit
+  const secSpeed = {}; for (const u of units.values()) for (const s of u.segs) if (s.speed != null) secSpeed[s.section] = s.speed;
+  for (const u of units.values()) for (const s of u.segs) if (s.speed == null) s.speed = secSpeed[s.section] ?? null;
+  return { units: [...units.values()], byUnit: Object.fromEntries([...units.entries()]) };
+}
+function unitForLocation(J, section, line, pos) {
+  const sec = sectionName(section), ln = lineKey(line);
+  for (const u of J.units) for (const s of u.segs) if (s.section === sec && (!ln || s.line === ln || !s.line) && pos >= s.a && pos <= s.b) return u.unit;
+  for (const u of J.units) for (const s of u.segs) if (s.section === sec && pos >= s.a && pos <= s.b) return u.unit;
+  // TRC / OMS runs are recorded against their own section but the km run on past its ends (chainage is continuous along the
+  // route): look in the sections that join this one on the same line (one starts where this one ends) …
+  const mine = []; for (const u of J.units) for (const s of u.segs) if (s.section === sec && (!ln || s.line === ln)) mine.push(s);
+  if (mine.length) {
+    // a joining section shares a station with this one (BLY in Howrah-Bally / Bally-Bandel) and starts where this one ends
+    // (or ends where it starts) on the same line – sections of other routes can have the same km numbers
+    const lo0 = Math.min(...mine.map(s => s.a)), hi0 = Math.max(...mine.map(s => s.b));
+    const stn = n => new Set(String(sectionCode(n) || '').toUpperCase().replace(/KWAE?|KWA/g, 'KWA').replace(/KHN/g, 'KAN').split(/[-\s]+/).filter(x => /^[A-Z]{2,5}$/.test(x)));
+    const me = stn(sec);
+    if (pos < lo0 || pos > hi0) for (const u of J.units) for (const s of u.segs) if (s.section !== sec && (!ln || s.line === ln) && pos >= s.a && pos <= s.b) {
+      const other = stn(s.section); if (![...other].some(x => me.has(x))) continue;
+      const rng = []; for (const v of J.units) for (const t of v.segs) if (t.section === s.section && t.line === s.line) rng.push(t.a, t.b);
+      const oLo = Math.min(...rng), oHi = Math.max(...rng);
+      if ((pos > hi0 && Math.abs(oLo - hi0) <= 50) || (pos < lo0 && Math.abs(oHi - lo0) <= 50)) return u.unit;
+    }
+    // … else a gap in the jurisdiction table or a yard just past the section's first / last km: the nearest stretch of this section
+    // and line within 1 km (further out is another division's track – e.g. beyond Azimganj–New Farakka 181 km)
+    if (pos > lo0 - 1000 && pos < hi0 + 1000) { let best = null, bd = 1001; for (const u of J.units) for (const s of u.segs) if (s.section === sec && (!ln || s.line === ln)) { const d = pos < s.a ? s.a - pos : pos > s.b ? pos - s.b : 0; if (d < bd) { bd = d; best = u.unit; } } if (best) return best; }
+  }
+  return null;
+}
+
+// ---------- coverage (K2, K3) – counted in km units like TMS (km a..b inclusive) ----------
+const kmSet = (a, b) => { const o = []; for (let k = Math.floor(a / 1000); k <= Math.floor(Math.max(a, b - 1) / 1000); k++) o.push(k); return o; };
+// Foot plate / rear vehicle trips are entered against train routes; routes of two codes (and a few others) are named here.
+// Chainage along these routes is the same as in the sections' own registers (km from Howrah / Khana).
+const ROUTES = {
+  'HWH-GZB': ['HWH-BLY Chord line', 'Howrah-Bally', 'Bally-Saktigarh', 'Saktigarh-Barddhaman', 'Barddhaman-Khana'],
+  'KAN-KEU': ['Khana-Sainthia', 'Sainthia-Nalhati', 'Nalhati-Bonidanga Link'],
+  'HWH-NGP': ['Howrah - Santragachi'], 'HWH NGP': ['Howrah - Santragachi']
+};
+function routeSections(route) {
+  const r = String(route || '').trim();
+  const rk = r.toUpperCase().replace(/\s*-\s*/g, '-').replace(/\s+/g, ' '); if (ROUTES[rk]) return ROUTES[rk];
+  const codes = r.split('-').map(s => s.trim());
+  if (codes.length >= 3 && codes.every(c => /^[A-Z]{2,5}$/.test(c))) { const out = []; for (let i = 0; i + 1 < codes.length; i++) out.push(sectionName(codes[i] + '-' + codes[i + 1])); return out; }
+  return [sectionName(r)];
+}
+function inspectorMatches(insp, unit, who) {
+  if (who === 'any') return true;
+  if (desigUnit(insp.desig) !== unit) return false;
+  return who === 'incharge' ? isInCharge(insp.desig) : true;   // 'unit': any official of the unit (in-charge, sectional SSE, JE)
+}
+function coverage(unitObj, inspections, from, to, opts = {}) {
+  // Default basis = section-km (lines running parallel are covered by one inspection – IRPWM Table 1B note); opts.lineWise = per line.
+  const lw = !!opts.lineWise; const need = new Map(); // key section|line|km -> seg (fastest seg kept)
+  const wt = new Map();   // opts.measure 'length': each km unit weighs the length of track in it (km), else 1
+  for (const s of unitObj.segs) { if (opts.segFilter && !opts.segFilter(s)) continue; for (const k of kmSet(s.a, s.b)) { const key = `${s.section}|${lw ? s.line : '*'}|${k}`; const o = need.get(key); if (!o || (s.speed || 0) > (o.speed || 0)) need.set(key, s); const len = Math.max(0, Math.min(s.b, (k + 1) * 1000) - Math.max(s.a, k * 1000)) / 1000; wt.set(key, Math.max(wt.get(key) || 0, len)); } }
+  const done = new Set(); const by = new Map();
+  for (const i of inspections) {
+    if (i.date < from || i.date > to) continue;
+    if (opts.types && !opts.types.includes(i.type)) continue;
+    if (!inspectorMatches(i, unitObj.unit, opts.who || 'incharge')) continue;
+    const ln = lineKey(i.line); const secs = routeSections(i.route); let hit = false;
+    // opts.endExclusive (KM_END = exclusive): "KM Stretch 98 - 128" covers track 98.000–128.000, not the km beyond 128.000
+    const lo = Math.min(i.kmA, i.kmB), hi = Math.max(i.kmA, i.kmB), top = opts.endExclusive && hi > lo ? hi - 1 : hi;
+    for (const sec of secs) for (let k = lo; k <= top; k++) {
+      const key = `${sec}|${lw ? ln : '*'}|${k}`; const seg = need.get(key); if (!seg) continue;
+      hit = true; if (opts.accept && !opts.accept(i, seg)) continue;
+      done.add(key); if (!by.has(key)) by.set(key, i.date);
+    }
+    // a route this program does not know (e.g. a new train route): an official of the unit inspected his own track, so the
+    // unit's sections on the same line and km stand for it
+    if (!hit && (opts.who || 'incharge') !== 'any' && !secs.some(sec => unitObj.segs.some(s => s.section === sec))) {
+      for (const s of unitObj.segs) { if (opts.segFilter && !opts.segFilter(s)) continue; if (s.line !== ln) continue;
+        for (const k of kmSet(s.a, s.b)) { if (k < lo || k > top) continue; const key = `${s.section}|${lw ? s.line : '*'}|${k}`; const seg = need.get(key); if (!seg) continue; if (opts.accept && !opts.accept(i, seg)) continue; done.add(key); if (!by.has(key)) by.set(key, i.date); } }
+    }
+  }
+  const missing = [...need.keys()].filter(k => !done.has(k)).map(k => { const [section, line, km] = k.split('|'); return { section, line, km: +km }; });
+  if (opts.measure === 'length') { const W = k => wt.get(k) || 0; const tot = [...need.keys()].reduce((x, k) => x + W(k), 0), mis = [...need.keys()].filter(k => !done.has(k)).reduce((x, k) => x + W(k), 0);
+    return { total: need.size, covered: done.size, missing, pct: tot ? mis / tot * 100 : 0, km: Math.round(tot * 100) / 100, kmMissing: Math.round(mis * 100) / 100 }; }
+  return { total: need.size, covered: done.size, missing, pct: need.size ? missing.length / need.size * 100 : 0 };
+}
+
+const pad = n => String(n).padStart(2, '0');
+const lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+function monthRange(ym) { const [y, m] = ym.split('-').map(Number); return { from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-${pad(lastDay(y, m))}` }; }
+function prevMonth(ym, n = 1) { let [y, m] = ym.split('-').map(Number); m -= n; while (m < 1) { m += 12; y--; } return `${y}-${pad(m)}`; }
+
+// ---------- running month (basis 'This month'): forecast for the coming 1st ----------
+// opts.asOf = today when ym is the running month. A period that has not started does not count; a period still running is judged
+// at the present pace (work so far against the share of the period gone by), so days still to come are not counted as failure.
+const dmyS = d => d ? `${d.slice(8, 10)}-${d.slice(5, 7)}` : '';
+const dayCount = (a, b) => daysBetween(a, b) + 1;
+// shortfall % of a coverage result for a period of len days of which el have gone by
+const paceShort = (c, el, len) => { if (!c.total) return 0; if (el >= len) return c.pct; const done = 1 - c.pct / 100; return Math.max(0, 100 * (1 - done * len / el)); };   // share covered (km units or km of track) against the share of the period gone by
+const r1 = v => Math.round(v * 10) / 10;
+
+// K2: whole jurisdiction by FP/RV in each fortnight of month ym; average shortfall
+function kpiK2(unitObj, insp, ym, opts = {}) {
+  const [y, m] = ym.split('-').map(Number); const ld = lastDay(y, m);
+  const a1 = `${ym}-01`, b1 = `${ym}-15`, a2 = `${ym}-16`, b2 = `${ym}-${pad(ld)}`; const now = opts.asOf && opts.asOf <= b2 ? opts.asOf : null;
+  const f1 = coverage(unitObj, insp, a1, b1, { ...opts, types: ['FP', 'RV'] });
+  const f2 = coverage(unitObj, insp, a2, b2, { ...opts, types: ['FP', 'RV'] });
+  if (!now) { const v = (f1.pct + f2.pct) / 2; return { value: v, marks: marks('K2', v), detail: { f1, f2, basis: 'Both fortnights (month over)' } }; }
+  if (now <= b1) {   // 1st fortnight only
+    const el = dayCount(a1, now), v = paceShort(f1, el, 15);
+    return { value: v, marks: marks('K2', v), detail: { f1, f2, forecast: true, basis: `Forecast on the 1st fortnight: ${f1.covered} of ${f1.total} km covered in ${el} of 15 days` + (el < 15 ? ` (at this pace ${r1(v)} % short)` : ` (${r1(v)} % short)`) + ' – the 2nd fortnight has not started' } };
+  }
+  // the running 2nd fortnight counts for the share of its days gone by (on the 16th it barely counts; on the last day fully)
+  const el = dayCount(a2, now), len = dayCount(a2, b2), s2 = paceShort(f2, el, len), w = el / len, v = (f1.pct + s2 * w) / (1 + w);
+  return { value: v, marks: marks('K2', v), detail: { f1, f2, forecast: true, basis: `Forecast: 1st fortnight ${r1(f1.pct)} % short + 2nd fortnight so far ${f2.covered} of ${f2.total} km in ${el} of ${len} days (at this pace ${r1(s2)} % short; counted for the ${el} day(s) gone by)` } };
+}
+// K3: previous two months; speed > 110 -> push trolley or on foot; <= 110 -> push trolley (opts.footOK lets foot count everywhere)
+function kpiK3(unitObj, insp, ym, opts = {}) {
+  const from = monthRange(prevMonth(ym, 1)).from, to = monthRange(ym).to;
+  const accept = (i, seg) => i.type === 'TROLLEY' || (i.type === 'FOOT' && (opts.footOK || (seg.speed != null && seg.speed > 110)));
+  const c = coverage(unitObj, insp, from, to, { ...opts, types: ['FOOT', 'TROLLEY'], accept });
+  const now = opts.asOf && opts.asOf < to ? opts.asOf : null;
+  if (!now) return { value: c.pct, marks: marks('K3', c.pct), detail: { ...c, basis: `Two months ${dmyS(from)} to ${dmyS(to)} (over)` } };
+  const el = dayCount(from, now), len = dayCount(from, to), v = paceShort(c, el, len);
+  return { value: v, marks: marks('K3', v), detail: { ...c, forecast: true, basis: `Forecast: ${c.covered} of ${c.total} km covered in ${el} of ${len} days of the two months ${dmyS(from)} to ${dmyS(to)} (at this pace ${r1(v)} % short; ${r1(c.pct)} % not yet covered)` } };
+}
+// K16: distinct field days of the in-charge in month ym (from all inspection records available)
+function kpiK16(unit, insp, ym, who = 'incharge', asOf = null) {
+  const { from, to } = monthRange(ym); const days = new Set();
+  const byType = {};   // every inspection recorded in TMS counts (TMS rule): FP/RV, on foot, trolley, asset registers, joint P&C, USFD, other …
+  for (const i of insp) if (i.date >= from && i.date <= to && inspectorMatches(i, unit, who)) { days.add(i.date); (byType[i.type] = byType[i.type] || new Set()).add(i.date); }
+  const n = days.size; const bt = {}; for (const t of Object.keys(byType).sort()) bt[t] = byType[t].size; const now = asOf && asOf < to ? asOf : null;
+  if (!now) return { value: n, marks: marks('K16', n), detail: { days: [...days].sort(), byType: bt, basis: 'Whole month (over)' } };
+  const el = dayCount(from, now), len = dayCount(from, to), f = Math.min(len, Math.round(n * len / el));
+  return { value: f, marks: marks('K16', f), detail: { days: [...days].sort(), byType: bt, soFar: n, forecast: true, basis: `Forecast: ${n} field day(s) in ${el} of ${len} days – at this pace ${f} by month end` } };
+}
+
+// ---------- dates ----------
+// first 10 characters of a 'yyyy-mm-dd…' value (a stored time part is ignored); null when it is not a date
+const day = v => { const m = String(v == null ? '' : v).trim().match(/^\d{4}-\d\d-\d\d/); return m ? m[0] : null; };
+const addMonths = (d, n) => { d = day(d); if (!d) return ''; const [y, m, dd] = d.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1 + n, 1)); const ld = lastDay(t.getUTCFullYear(), t.getUTCMonth() + 1); return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(Math.min(dd, ld))}`; };
+const addDays = (d, n) => { d = day(d); return d ? new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10) : ''; };
+const daysBetween = (a, b) => { a = day(a); b = day(b); return a && b ? Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5) : NaN; };
+const nextFirst = d => addMonths(d.slice(0, 8) + '01', 1);
+
+// ---------- K1: scheduled inspections (Latest inspection report) ----------
+// Calibrated on TMS scores of 01.10.2026 (LLH, HGY, BMG, BDC all 0% overdue): latest of JE / SSE / ADEN dates; editable in Settings.
+const K1_DEFAULTS = { PXING_PAX: 3, PXING_OTHER: 12, CURVE: 12, LWR: 6, LXING: 2, STALE_DAYS: 365 };
+const K1W = { PXING: 0.3, CURVE: 0.3, LWR: 0.2, LXING: 0.2 };
+function assetDue(a, per = K1_DEFAULTS) {
+  const last = [a.lastJE, a.lastSSE, a.lastADEN].filter(Boolean).sort().pop() || null;
+  const months = a.type === 'PXING' ? (a.pax ? per.PXING_PAX : per.PXING_OTHER) : per[a.type];
+  return { last, due: last && months ? addMonths(last, months) : null, months };
+}
+// TMS: K1 on the 1st of the month; an asset due that day is not yet overdue (due < asOn). 16-Oct-2026: the BDC / NDAE / BZLE P&C that
+// looked "last inspected 30-06, due 30-09" were really 01-07 / 01-10 – the sheet read every date a day early (01_Store DATE FIX).
+// [E] 16-Oct-2026 (user: PKR curve 19up "overdue" is not true in TMS): TMS counts an inspection as overdue only when its DUE MONTH
+// is over – inspected 02-10-2025, yearly → due October 2026 → overdue from 1-Nov. On the 1st this is the same as "due < 1st".
+// Checked on TMS's Latest Inspection Report 16-Oct: by the month rule the division has 4 overdue items, by the day rule 118.
+const k1Overdue = (due, asOn) => !!due && String(due).slice(0, 7) < String(asOn).slice(0, 7);
+// soonUntil (running month): marks from what is overdue on asOn (month rule); assets due in the running month (before soonUntil, the
+// coming 1st) are listed as "due this month" (reminders) – they become overdue on the 1st if not inspected.
+function kpiK1(unit, assets, asOn, per = K1_DEFAULTS, soonUntil = null) {
+  const mine = assets.filter(a => a.unit === unit); const by = {}; const list = [];
+  for (const a of mine) { const d = assetDue(a, per); const t = by[a.type] = by[a.type] || { n: 0, over: 0, never: 0 }; if (!d.last) { t.never++; list.push({ ...a, ...d, over: false, never: true }); continue; } const stale = d.due < asOn && daysBetween(d.due, asOn) > (per.STALE_DAYS ?? 365); if (stale) { t.stale = (t.stale || 0) + 1; list.push({ ...a, ...d, over: false, stale: true }); continue; } t.n++; const over = k1Overdue(d.due, asOn); if (over) t.over++; list.push({ ...a, ...d, over }); }
+  let v = 0, w = 0; for (const t of Object.keys(K1W)) if (by[t] && by[t].n) { v += K1W[t] * by[t].over / by[t].n * 100; w += K1W[t]; }
+  const value = w ? v : null; // weights of asset types the unit has
+  const slim = a => ({ type: a.type, id: a.id, section: a.section, line: a.line, km: a.km, m: a.m, station: a.station, last: a.last, due: a.due });
+  const over = list.filter(a => a.over).sort((x, y) => String(x.due).localeCompare(String(y.due))).map(slim);
+  const soon = soonUntil ? list.filter(a => !a.over && !a.never && !a.stale && a.due && a.due < soonUntil).sort((x, y) => String(x.due).localeCompare(String(y.due))).map(slim) : [];
+  const basis = soonUntil ? `Forecast: overdue as on today (${asOn.slice(8, 10)}-${asOn.slice(5, 7)} – due month over); ${soon.length} due this month – inspect them before ${soonUntil.slice(8, 10)}-${soonUntil.slice(5, 7)} to keep the marks` : `As on ${asOn.slice(8, 10)}-${asOn.slice(5, 7)}-${asOn.slice(0, 4)} (TMS method: on the 1st of the month – due that day is not overdue)`;
+  return { value, marks: value == null ? null : marks('K1', value), detail: { byType: by, over, soon, basis }, list };
+}
+
+// ---------- K5/K6: fractures in month vs same month last year ----------
+function kpiFracture(unit, fractures, J, type, ym) {
+  const ly = (+ym.slice(0, 4) - 1) + ym.slice(4);
+  const mine = fractures.filter(f => f.type === type && unitForLocation(J, f.section, f.line, (f.km || 0) * 1000 + (f.m || 0)) === unit);
+  const cur = mine.filter(f => f.date && f.date.slice(0, 7) === ym).length, prev = mine.filter(f => f.date && f.date.slice(0, 7) === ly).length;
+  const v = reduction(prev, cur); return { value: v, marks: marks(type === 'RAIL' ? 'K5' : 'K6', v), detail: { cur, prev, ym, ly } };
+}
+
+// ---------- K10: defects pending > 10 days (Locations needing attention) ----------
+function openOn(items, d) { return items.filter(i => i.firstSeen <= d && (!i.closedOn || i.closedOn > d)); }
+// [E] 20-Oct: "pending since" counted the TMS way – both days (inspected 10/10 = 11 days on 20/10); late = more than 10 such days
+const pendingDays = (date, asOn) => { const d = daysBetween(date, asOn); return isNaN(d) ? null : d + 1; };
+function kpiK10(unit, lnaItems, asOn) {
+  const open = openOn(lnaItems.filter(i => i.unit === unit), asOn);
+  const late = open.filter(i => i.date && pendingDays(i.date, asOn) > 10);
+  const v = open.length ? late.length / open.length * 100 : 0;
+  const cat = {}; late.forEach(i => { const c = i.cat || 'LNA'; cat[c] = (cat[c] || 0) + 1; });
+  return { value: v, marks: marks('K10', v), detail: { open: open.length, late: late.length, over7: open.filter(i => i.date && pendingDays(i.date, asOn) > 7).length, lateByCat: cat } };
+}
+
+// K10 as TMS does it: % pending > 10 days on the 1st, 11th and 21st, averaged. Only dates on which defect lists were already
+// being collected count (before that the open list is not known); with none of them, the single date asked for.
+function kpiK10avg(unit, lnaItems, dates, firstData, fallback) {
+  const use = dates.filter(d => firstData && d >= firstData);
+  if (!use.length) { const r = kpiK10(unit, lnaItems, fallback); r.detail.dates = [fallback]; return r; }
+  const per = use.map(d => ({ d, r: kpiK10(unit, lnaItems, d) }));
+  const v = per.reduce((a, x) => a + x.r.value, 0) / per.length;
+  return { value: v, marks: marks('K10', v), detail: { dates: use, byDate: per.map(x => ({ date: x.d, pct: Math.round(x.r.value * 100) / 100, open: x.r.detail.open, late: x.r.detail.late })), open: per[per.length - 1].r.detail.open, late: per[per.length - 1].r.detail.late } };
+}
+// [E] 20-Oct: K10 per date from the best list collected on that date – TMS's "Defects Pending for Compliance" (every category) from the
+// day it was first collected, before that "Locations needing attention". sources: [{name, from (first date), items}] best first.
+function kpiK10mix(unit, sources, dates, fallback) {
+  const pick = d => sources.find(s => s.from && d >= s.from && s.items.length);
+  let use = dates.map(d => ({ d, s: pick(d) })).filter(x => x.s);
+  if (!use.length) { const s = pick(fallback) || sources.find(x => x.items.length); if (!s) return null; use = [{ d: fallback, s }]; }
+  const per = use.map(x => ({ d: x.d, src: x.s.name, r: kpiK10(unit, x.s.items, x.d) }));
+  const v = per.reduce((a, x) => a + x.r.value, 0) / per.length; const L = per[per.length - 1].r.detail;
+  return { value: v, marks: marks('K10', v), detail: { dates: per.map(x => x.d), byDate: per.map(x => ({ date: x.d, src: x.src, pct: Math.round(x.r.value * 100) / 100, open: x.r.detail.open, late: x.r.detail.late, lateByCat: x.r.detail.lateByCat })), open: L.open, late: L.late, lateByCat: L.lateByCat } };
+}
+// K12: % of AT welds found defective in their first (initial) USFD testing, welds done in the six months up to month ym.
+// welds: [{unit, month, done, tested}] from the weld register; defects: USFD weld defects seen in TMS (kept even after removal)
+function kpiK12(unit, welds, defects, ym, initialDays = 180) {
+  const from = prevMonth(ym, 5);
+  const inWin = m => m >= from && m <= ym;
+  const mine = welds.filter(w => w.unit === unit && inWin(w.month));
+  const done = mine.reduce((a, w) => a + (+w.done || 0), 0), tested = mine.reduce((a, w) => a + (+w.tested || 0), 0);
+  // [E] 16-Oct: TMS rule (AT Welds Done/Defective report) – welds done in the six months whose LATEST USFD result is defective, of those tested.
+  // Used when the weld register gave the latest result (WeldMonths.Defective); else the older reading from USFD defect lists below.
+  if (mine.some(w => w.defective != null && w.defective !== '')) { const def = mine.reduce((a, w) => a + (+w.defective || 0), 0);
+    if (!tested) return { value: null, marks: def ? 0 : null, detail: { done, tested, defective: def, from, to: ym } };
+    const v = def / tested * 100; return { value: v, marks: marks('K12', v), detail: { done, tested, defective: def, from, to: ym, basis: `Latest USFD result: ${def} of ${tested} tested AT welds (done ${from} to ${ym}) defective` } }; }
+  const seen = new Set(); const bad = [];
+  for (const d of defects) {
+    if (d.unit !== unit || d.kind !== 'WELD' || !d.welded || !inWin(d.welded.slice(0, 7))) continue;
+    const det = d.detected || d.firstSeen; const dd = det ? daysBetween(d.welded, det) : NaN; if (!(dd >= 0 && dd <= initialDays)) continue; if (String(det).slice(0, 10) > monthRange(ym).to) continue;   // found after the month: not in that month's score
+    const k = [d.section, d.line, d.km, d.m, d.rail].join('|'); if (seen.has(k)) continue; seen.add(k); bad.push(d);
+  }
+  if (!tested) return { value: null, marks: bad.length ? 0 : null, detail: { done, tested, defective: bad.length, from, to: ym } };
+  const v = bad.length / tested * 100;
+  return { value: v, marks: marks('K12', v), detail: { done, tested, defective: bad.length, from, to: ym, list: bad.slice(0, 30).map(d => `${d.section} ${d.line} ${d.km}/${d.m} ${d.rail} ${d.status} (welded ${d.welded}, found ${d.detected || d.firstSeen})`) } };
+}
+
+// ---------- K14: DFWR older than 90 days removed during month ----------
+function kpiK14(unit, dfwrItems, J, ym, today, forecast = false) {
+  const mine = dfwrItems.filter(i => (i.unit || unitForLocation(J, i.section, i.line, (i.km || 0) * 1000 + (i.m || 0))) === unit);
+  const { from, to } = monthRange(ym); const end = today && today < to ? today : to;
+  const base = openOn(mine, from).filter(i => i.date && daysBetween(i.date, from) > 90);
+  const removed = base.filter(i => i.closedOn && i.closedOn <= end);
+  let v = base.length ? removed.length / base.length * 100 : null;
+  const pending90 = openOn(mine, end).filter(i => i.date && daysBetween(i.date, end) > 90);
+  const detail = { base: base.length, removed: removed.length, pending90: pending90.length, open: openOn(mine, end).length, basis: 'Whole month (over)' };
+  if (forecast && end < to && v != null) {   // month still running: removals so far at the present pace
+    const el = dayCount(from, end), len = dayCount(from, to), f = Math.min(base.length, removed.length * len / el); v = f / base.length * 100;
+    detail.forecast = true; detail.basis = `Forecast: ${removed.length} of ${base.length} DFWR (older than 90 days on the 1st) removed in ${el} of ${len} days – at this pace ${Math.round(f)} by month end`;
+  }
+  return { value: v, marks: v == null ? (pending90.length ? 0 : 4) : marks('K14', v), detail };
+}
+
+// ---------- K15: overdue oiling & greasing (count; % needs FP-joint total) ----------
+// K15: TMS counts main-line joints only (block-section joints; station / yard lines excluded) – user, 11.10.2026
+// [E] 16-Oct: TMS counts MAIN + LOOP line joints (FishPlateAnalysisSummary: TAK 44 of 964 = 4.6 % → 3, GRAE 67 of 652 = 10.3 % → 2,
+// both = TMS; main line alone had 0 overdue everywhere). sum = TMS's own summary row for the unit taken on or before asOn.
+function kpiK15(unit, ogItems, asOn, fpTotal, sum = null) {
+  if (sum && +sum.total > 0) { const v = +sum.overdue / +sum.total * 100; return { value: v, marks: marks('K15', v), detail: { overdue: +sum.overdue, fpTotal: +sum.total, main: [+sum.mainOverdue, +sum.mainTotal], loop: [+sum.loopOverdue, +sum.loopTotal], date: sum.date, basis: `TMS summary of ${String(sum.date).slice(8, 10)}-${String(sum.date).slice(5, 7)}: ${sum.overdue} of ${sum.total} FP joints (main + loop line) overdue` } }; }
+  const open = openOn(ogItems.filter(i => i.unit === unit), asOn).filter(i => !i.next || i.next.slice(0, 7) < asOn.slice(0, 7));
+  const v = fpTotal ? open.length / fpTotal * 100 : null;
+  return { value: v, marks: v == null ? null : marks('K15', v), detail: { overdue: open.length, fpTotal: fpTotal || null } };
+}
+
+// ---------- K7: repeated OMS peak locations (km with peaks in two consecutive runs) ----------
+function omsRepeated(rows) { // rows of one section+line: {km, runIdx(1=latest), vertical, lateral}
+  const byRun = {}; for (const r of rows) if ((r.vertical || 0) + (r.lateral || 0) > 0) (byRun[r.runIdx] = byRun[r.runIdx] || new Set()).add(r.km);
+  const rep = i => { const a = byRun[i] || new Set(), b = byRun[i + 1] || new Set(); return [...a].filter(k => b.has(k)); };
+  return { latest: rep(1), previous: rep(2) };
+}
+function kpiK7(unit, oms, J) {
+  const groups = {}; for (const r of oms) (groups[r.section + '|' + r.line] = groups[r.section + '|' + r.line] || []).push(r);
+  let cur = 0, prev = 0; const locs = [];
+  for (const [k, rows] of Object.entries(groups)) {
+    const [section, line] = k.split('|'); const rr = omsRepeated(rows);
+    for (const km of rr.latest) if (unitForLocation(J, section, line, km * 1000 + 500) === unit) { cur++; locs.push({ section, line, km }); }
+    for (const km of rr.previous) if (unitForLocation(J, section, line, km * 1000 + 500) === unit) prev++;
+  }
+  if (!Object.keys(groups).length) return { value: null, marks: null, detail: {} };
+  const v = reduction(prev, cur); return { value: v, marks: marks('K7', v), detail: { cur, prev }, list: locs };
+}
+
+// ---------- K8/K9: TRC counts per unit (latest run vs previous run) ----------
+function kpiTRC(k, cur, prev) { if (cur == null) return { value: null, marks: null, detail: {} }; const v = reduction(prev, cur); return { value: prev == null ? null : v, marks: prev == null ? null : marks(k, v), detail: { cur, prev } }; }
+
+// ---------- K11: IMRs (tested in month) removed after more than 3 days ----------
+function kpiK11(unit, imr, J, ym) {
+  const mine = imr.filter(r => r.tested && r.tested.slice(0, 7) === ym && unitForLocation(J, r.section, r.line, (r.km || 0) * 1000 + (r.m || 0)) === unit);
+  if (!mine.length) return { value: 0, marks: 5, detail: { n: 0, late: 0 } };
+  const late = mine.filter(r => r.days == null ? true : r.days > 3).length; const v = late / mine.length * 100;
+  return { value: v, marks: marks('K11', v), detail: { n: mine.length, late } };
+}
+
+// ---------- K13: joggling pending = welds needing joggled plates (new AT welds until tested, defective welds) not joggled ----------
+function kpiK13(unit, jogItems, atTotal, asOn) {
+  const open = openOn(jogItems.filter(i => i.unit === unit), asOn);
+  if (!atTotal) return { value: null, marks: open.length ? 0 : null, detail: { pending: open.length, atWelds: 0 } };
+  const v = open.length / atTotal * 100; return { value: v, marks: marks('K13', v), detail: { pending: open.length, atWelds: atTotal } };
+}
+
+// ---------- jurisdiction as mapped in TMS (collector, kind 'tmsJurisdiction') vs the Jurisdiction Details file ----------
+// TMS names: unit "SSE/P.WAY/BWN(W)" → BWNW, "SSE/P.Way/SNT" → SNT, "SSE/PW/SRP" → SRP (not a P-Way in-charge → null);
+// line "Down Line" → DN, "Up Line 1" → UP1, "Reversible Line" → REV, "Down Chord Line" → DNCH; section via sectionName.
+const tmsUnit = name => { const m = String(name || '').toUpperCase().replace(/\s+/g, '').match(/^SSE\/(?:P\.?WAY|PW)\/(.+)$/); return m ? m[1].replace(/[^A-Z0-9]/g, '') : null; };
+const tmsLine = l => lineKey(String(l || '').replace(/\bline\b/ig, ' ').replace(/\s+/g, ' ').trim()) || '';
+// segs: [{unit, section, line, a, b}] (metres). Pieces shorter than tol metres are ignored.
+function compareJurisdiction(fileSegs, tmsSegs, tol = 50) {
+  const norm = s => ({ unit: s.unit, section: sectionName(s.section) || '', line: tmsLine(s.line), a: Math.min(+s.a, +s.b), b: Math.max(+s.a, +s.b) });
+  const F = fileSegs.map(norm), T = tmsSegs.map(norm); const key = s => s.section + '|' + s.line;
+  const by = (L) => { const m = new Map(); L.forEach(s => { const k = key(s); if (!m.has(k)) m.set(k, []); m.get(k).push(s); }); return m; };
+  const fb = by(F), tb = by(T); const keys = [...new Set([...fb.keys(), ...tb.keys()])].sort();
+  const out = { onlyTms: [], onlyFile: [], unitDiff: [], kmDiff: [] };
+  const minus = (s, others) => { let p = [[s.a, s.b]]; for (const o of others) p = p.flatMap(([a, b]) => (o.b <= a || o.a >= b) ? [[a, b]] : [[a, Math.max(a, o.a)], [Math.min(b, o.b), b]].filter(([x, y]) => y - x > 0)); return p.filter(([a, b]) => b - a >= tol); };
+  const push = (list, o) => { const l = list[list.length - 1]; if (l && l.section === o.section && l.line === o.line && l.unit === o.unit && l.other === o.other && Math.abs(l.b - o.a) <= tol) l.b = Math.max(l.b, o.b); else list.push(o); };
+  for (const k of keys) {
+    const fs = (fb.get(k) || []).sort((x, y) => x.a - y.a), ts = (tb.get(k) || []).sort((x, y) => x.a - y.a); const [section, line] = k.split('|');
+    // a piece one side has and the other does not: km difference when it continues the same unit's stretch on the other side, else missing
+    const side = (A, B, only, tag) => { for (const s of A) for (const [a, b] of minus(s, B)) {
+      const near = B.some(o => o.unit === s.unit && (Math.abs(o.a - b) <= tol || Math.abs(o.b - a) <= tol));
+      push(near ? out.kmDiff : only, { unit: s.unit, section, line, a, b, side: tag }); } };
+    side(ts, fs, out.onlyTms, 'tms'); side(fs, ts, out.onlyFile, 'file');
+    for (const t of ts) for (const f of fs) { const a = Math.max(t.a, f.a), b = Math.min(t.b, f.b); if (b - a >= tol && t.unit !== f.unit) push(out.unitDiff, { section, line, a, b, unit: f.unit, other: t.unit }); }
+  }
+  const km = L => Math.round(L.reduce((x, s) => x + (s.b - s.a), 0) / 100) / 10;
+  out.totals = { file: { stretches: F.length, km: km(F), units: new Set(F.map(s => s.unit)).size }, tms: { stretches: T.length, km: km(T), units: new Set(T.map(s => s.unit)).size }, onlyTmsKm: km(out.onlyTms), onlyFileKm: km(out.onlyFile), unitDiffKm: km(out.unitDiff), kmDiffKm: km(out.kmDiff) };
+  return out;
+}
+
+return { KPI, marks, reduction, desigUnit, isInCharge, buildJurisdiction, unitForLocation, routeSections, inspectorMatches, coverage, monthRange, prevMonth, kpiK2, kpiK3, kpiK16, day, addMonths, addDays, daysBetween, nextFirst, K1_DEFAULTS, assetDue, k1Overdue, kpiK1, kpiFracture, openOn, pendingDays, kpiK10, kpiK10avg, kpiK10mix, kpiK12, kpiK14, kpiK15, omsRepeated, kpiK7, kpiTRC, kpiK11, kpiK13, tmsUnit, tmsLine, compareJurisdiction, normUnit };
+})();
+__m['dpc.js'] = (function(){
+// [E] 20-Oct-2026: TMS dashboard item 7 "Defects Pending for Compliance" – the detail page
+// PopUpDefectsOnMainLineDetails.jsp?authlvl=5&cond=HWH&repflag=100&days= lists EVERY pending defect of the division in one page,
+// one table per category (P-Xing ML / PRL, joint P-Xing ML / PRL, LWR, SEJ, bridge, LC, curve, TRC, OMS, Other inspections,
+// defects on loop lines). Each row names the SSE TMS charges it to, the inspection date and "Pending Since Days" (TMS counts both
+// days: inspected 10/10 shows 11 days on 20/10). This is TMS's own K10 basis (KPI-10 "Defects Pending for Compliance (>10 Days)").
+// Works without a browser DOM (Apps Script tests, Node, the admin page).
+const {decode} = __m['tmstable.js'];
+const {tmsUnit} = __m['kpi.js'];
+
+const DPC_CATS = {
+  pxingtableml: 'PXING_ML', pxingtableprl: 'PXING_PRL', pxingjointtableml: 'PXING_JOINT_ML', pxingjointtableprl: 'PXING_JOINT_PRL',
+  lwrtable: 'LWR', sejtable: 'SEJ', brtable: 'BR', lctable: 'LC', curvetable: 'CURVE', trctable: 'TRC', omstable: 'OMS',
+  othertable: 'OTHER', looptable: 'LOOP'
+};
+const DPC_NAME = { PXING_ML: 'Points & crossings (main line)', PXING_PRL: 'Points & crossings (passenger running loop)', PXING_JOINT_ML: 'Joint P&C inspection (main line)',
+  PXING_JOINT_PRL: 'Joint P&C inspection (PRL)', LWR: 'LWR', SEJ: 'SEJ', BR: 'Bridge', LC: 'Level crossing', CURVE: 'Curve', TRC: 'TRC', OMS: 'OMS',
+  OTHER: 'Other inspections (foot plate / rear vehicle / trolley …)', LOOP: 'Loop line' };
+// categories that "Locations needing attention" does not hold (their jobs come from this list)
+const DPC_ONLY = ['OTHER', 'LOOP'];
+
+const strip = s => decode(String(s == null ? '' : s).replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+const isoDMY = s => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(s || '').trim()); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : ''; };
+const num = s => { const t = String(s == null ? '' : s).trim(); return t !== '' && !isNaN(+t) ? +t : null; };
+
+function dpcFromPage(html) {
+  html = String(html || '');
+  const text = strip(html);
+  const rep = /Reporting Date:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i.exec(text); const asOn = rep ? isoDMY(rep[1]) : null;
+  const out = []; const seen = {};
+  const re = /<table\b([^>]*)>([\s\S]*?)<\/table>/gi; let m;
+  while ((m = re.exec(html))) {
+    const id = (/\bid\s*=\s*["']?([\w-]+)/i.exec(m[1]) || [])[1]; const cat = id && DPC_CATS[id.toLowerCase()]; if (!cat) continue;
+    const rows = [...m[2].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => [...r[1].matchAll(/<(t[hd])\b([^>]*)>([\s\S]*?)<\/t[hd]>/gi)]
+      .map(c => ({ th: c[1].toLowerCase() === 'th', span: +((/colspan\s*=\s*["']?(\d+)/i.exec(c[2]) || [])[1] || 1), t: strip(c[3]) })));
+    const hi = rows.findIndex(r => r.some(c => /^SSE$/i.test(c.t))); if (hi < 0) continue;
+    const head = rows[hi]; const sub = rows[hi + 1] && rows[hi + 1].length && rows[hi + 1].every(c => c.th) ? rows[hi + 1] : [];
+    const cols = []; let si = 0;
+    head.forEach(c => { if (c.span > 1) { for (let k = 0; k < c.span; k++) cols.push((c.t + ' ' + ((sub[si++] || {}).t || '')).trim()); } else cols.push(c.t); });
+    const ci = rx => cols.findIndex(c => rx.test(c));
+    const iSSE = ci(/^SSE$/i), iSec = ci(/^Section$/i), iLine = ci(/^(Loop )?Line$/i), iStn = ci(/Station/i), iAsset = ci(/(No\.|Asset Name)/i),
+      iType = ci(/Type of Inspection/i), iKm = ci(/^Location( From)? km$/i), iM = ci(/^Location( From)? m$/i), iKmTo = ci(/^Location To km$/i), iMTo = ci(/^Location To m$/i),
+      iPost = ci(/^POST$/i), iDef = ci(/^Defect$/i), iDays = ci(/Pending\s*Since\s*Days/i), iDate = ci(/(^Inspection Details Date$|^Date of Inspection$)/i),
+      iBy = ci(/(^Inspection Details Authority$|^Inspected By$)/i), iAden = ci(/^ADEN$/i);
+    for (const r of rows.slice(hi + 1)) {
+      if (!r.length || !/^\d+$/.test(r[0].t) || r.some(c => c.th)) continue;
+      const v = i => (i >= 0 && r[i] ? r[i].t : '');
+      const sse = v(iSSE); const date = isoDMY(v(iDate));
+      const o = { cat, sse, unit: tmsUnit(sse) || '', aden: v(iAden), section: v(iSec), line: v(iLine), station: v(iStn), asset: v(iAsset), type: v(iType),
+        km: num(v(iKm)), m: num(v(iM)), kmTo: num(v(iKmTo)), mTo: num(v(iMTo)), post: v(iPost), defect: v(iDef), date, by: v(iBy), days: num(v(iDays)), asOn };
+      const base = ['DPC', cat, o.unit, o.section, o.line, o.station, o.asset, o.km, o.m, date, o.defect].join('|');
+      seen[base] = (seen[base] || 0) + 1; o.key = seen[base] > 1 ? base + '|' + seen[base] : base;
+      out.push(o);
+    }
+  }
+  return out;
+}
+// "Pending since days" the way TMS counts it (both days counted)
+function dpcDays(date, asOn) { if (!date || !asOn) return null; return Math.round((Date.parse(asOn + 'T00:00:00Z') - Date.parse(date + 'T00:00:00Z')) / 864e5) + 1; }
+const isDpcPage = html => /Defects Pending for Compliance/i.test(String(html || '')) && /id\s*=\s*["']?(pxingtableML|othertable|looptable)/i.test(String(html || ''));
+
+return { DPC_CATS, DPC_NAME, DPC_ONLY, dpcFromPage, dpcDays, isDpcPage };
+})();
 __m['shotocr.js'] = (function(){
 // Screenshot reader for TMS web report pages (OMS peaks comparative summary, OMS accn. peaks, IMR testing history …).
 // Dependency-free: finds the table grid (row bands and cell borders) and reads each cell with glyph templates
@@ -2929,9 +3376,10 @@ const {classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePas
 const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
 const {htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage} = __m['tmshtml.js'];
+const {dpcFromPage, isDpcPage, DPC_NAME} = __m['dpc.js'];   // [E] 20-Oct: Defects Pending for Compliance (K10)
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME };
 
 return { CORE };
 })();

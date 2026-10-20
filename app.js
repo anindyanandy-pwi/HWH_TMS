@@ -83,6 +83,8 @@ const isOpen = j => OPEN.includes(j.Status);
 const inUnit = x => S.unit === '__all' || x.Unit === S.unit;
 const role = () => S.B.user.Role;
 const recMode = j => (S.B.recordModes || {})[j.Type] || 'full';
+window.TMSC.NAVS = NAVS;   // [H] 19-Oct: health.js adds its menu entries (Track health)
+window.TMSC.versionBanner = () => versionBanner();   // [H] 19-Oct: the admin's Version check banner also on Track health (the admin's first screen)
 window.TMSC.isOpen = isOpen; window.TMSC.inUnit = inUnit; window.TMSC.role = () => role(); window.TMSC.recMode = recMode; window.TMSC.OPEN = OPEN;
 
 // ---------- sign in on the common link (the plain app address): mobile number + name + designation, no approval ----------
@@ -342,6 +344,7 @@ VIEWS.overview = el => {
   const card = (cls, id, l, v, s) => { const b = B(l); return `<div class="kpi ${cls}"${id ? ` id="${id}" style="cursor:pointer"` : ''}><div class="l">${esc(b.p)}</div>${b.s ? `<div class="lh">${esc(b.s)}</div>` : ''}<div class="v">${v}</div><div class="s">${s}</div></div>`; };
   const grpTitle = level === 'Unit' ? 'Units in your charge' : level === 'AEN' ? 'AEN jurisdictions' : 'Sr DEN jurisdictions';
   el.innerHTML = pageHead(r === 'AEN' ? 'Units' : r === 'SRDEN' ? 'Overview' : 'Division overview', scopeText()) +
+    (r === 'ADMIN' ? '<div id="vbanner"></div>' : '') +   // [E] 17-Oct Version check
     `<div class="ovtop"><div class="hero">${ring(divAvg == null ? null : +divAvg.toFixed(1), 82, { size: 132, stroke: 14, color: 'var(--accent)', sub: 'of 82' })}<div><div class="ht">${lab('KPI forecast')} · ${esc(S.basis === 'Last month' ? 'last month' : 'this month')}</div><div class="hh">${esc(B('Division average').p)}</div><div class="hs">${allK.length ? `average of ${allK.length} unit(s) at the present pace` : 'no KPI calculated yet – upload TMS data, then Recalculate'}</div></div></div>` +
     `<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">${card(tot.od ? 'crit' : 'ok', '', 'Open jobs', tot.open || 0, `${tot.od || 0} overdue at SSE`)}${card(tot.p1 ? 'crit' : 'ok', '', 'Urgent (SR)', tot.p1 || 0, 'UML defects / overdue inspections')}${card(tot.odA ? 'warn' : 'ok', '', 'Work waiting for review', tot.wait || 0, `${tot.odA || 0} beyond approval time`)}${card('acc', '', 'Approved this month', tot.done || 0, `since ${dmy(m0)}`)}${card(tot.gone ? 'crit' : 'ok', 'kGone', 'Closed in TMS, not here', tot.gone || 0, 'open here although TMS shows them closed – not updated in the app')}</div></div>` + reconPanel() +
     `<div class="h2row"><h2>${esc(B(grpTitle).p)}${B(grpTitle).s ? ` <span>· ${esc(B(grpTitle).s)}</span>` : ''}</h2>${level !== 'Unit' && VIEWS.kpi && S.B.kpiNames ? `<a href="#" data-go2="kpi">KPI by unit ›</a>` : ''}</div>` +
@@ -349,16 +352,52 @@ VIEWS.overview = el => {
       return `<button type="button" class="ucard" data-g="${esc(g)}"><div class="uh">${ring(a == null ? null : Math.round(a), 82, { size: 54 })}<div style="min-width:0"><div class="un">${esc(g)}</div><div class="us">${esc(level === 'Unit' ? (unitMeta[g]?.label || '') : us.join(' · '))}</div></div></div>
         <div class="uf"><div><b>${o.open}</b>${esc(B('open').p)}</div><div><b class="${o.od ? 'c' : ''}">${o.od}</b>${esc(B('overdue').p)}</div><div><b>${o.p1}</b>${esc(B('urgent').p)}</div><div><b>${o.wait}</b>${esc(B('in review').p)}${o.odA ? ` <span class="od">(${o.odA} late)</span>` : ''}</div><div><b>${o.done}</b>${esc(B('approved').p)}</div>${o.gone ? `<div><b class="c">${o.gone}</b>closed in TMS</div>` : ''}</div></button>`; }).join('') || '<div class="empty">No jobs yet.</div>'}</div>`;
   el.querySelectorAll('[data-go2]').forEach(a => a.onclick = e => { e.preventDefault(); S.view = a.dataset.go2; render(); });
+  versionBanner().catch(() => { });   // [E] 17-Oct
   el.querySelectorAll('.ucard[data-g]').forEach(tr => tr.onclick = () => { const g = tr.dataset.g; if (level === 'Unit') { S.unit = g; $('selUnit').value = g; } S.view = 'urgent'; render(); });
   if ($('kGone') && VIEWS.jobs) $('kGone').onclick = () => { S.f.st = 'tmsgone'; S.view = 'jobs'; render(); };
   el.querySelectorAll('[data-rc]').forEach(b => b.onclick = () => modal(`<h3>Flag the jobs no longer in TMS</h3><p>${esc(b.dataset.txt)}</p><p>Confirm only if the upload was complete (all sections of this list came in). The jobs are then flagged "Closed in TMS, not here"; nothing is closed.</p>`, async () => {
     try { const r = await call('reconConfirm', { type: b.dataset.rc }, { timeout: 360000 }); toast('Done'); (r.recon || []).forEach(l => toast(l)); await loadAll(); } catch (e) { fail(e); return false; }
   }, 'Confirm and flag'));
 };
+// ---------- [E] 17-Oct: Version check (admin) – is a push.bat, a Recalculate or a collector reload still due? ----------
+// Website (build.json, always from the network) vs this page (CFG.VERSION) vs server (bootstrap.build) vs the KPI marks
+// (LAST_RECALC) vs the collector (CFG.COLLECTOR written by push.bat; the version handed over is noted on this computer).
+window.addEventListener('message', e => { const d = e.data; if (e.source !== window || !d || d.__tmsc !== 'collect' || !d.ver) return; try { localStorage.setItem('tmsc.collVer', JSON.stringify({ ver: String(d.ver), at: new Date().toISOString() })); } catch (x) { } });
+async function versionCheck(fresh) {
+  if (role() !== 'ADMIN') return [];
+  if (fresh) { try { S.B.build = await call('buildInfo', {}); } catch (e) { } }   // "Check again": ask the server (read only)
+  let site = null; try { site = await fetch('build.json?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.json() : null); } catch (e) { }
+  const b = S.B.build || {}; const rows = []; const tm = x => x ? dmy(String(x).slice(0, 10)) + ' ' + String(x).slice(11, 16) : '';
+  const add = (ok, what, val, fix) => rows.push({ ok, what, val, fix });
+  if (!site) add(null, 'Website', 'not checked – no network, or push.bat has not yet published the check file', 'Run push.bat once (it publishes the check file).');
+  else {
+    add(site.web === CFG.VERSION, 'This page', site.web === CFG.VERSION ? `the latest website (${site.web})` : `older copy ${CFG.VERSION || '?'} – the website has ${site.web}`, 'Press the reload button at the top (on a PC also Ctrl+F5).');
+    add(!!b.server && b.server === site.server, 'Server program', b.server === site.server ? `same delivery as the website (${b.server})` : `server ${b.server || 'older (no build id)'} – the website expects ${site.server}`, 'The server and the website come from different deliveries: run push.bat again – it says what is missing.');
+  }
+  const rc = b.recalc;
+  if (b.server) add(!!rc && rc.server === b.server, 'KPI marks', rc ? (rc.server === b.server ? `calculated ${tm(rc.when)} by this program` : `calculated ${tm(rc.when)} by an older program`) : 'no recalculation recorded since the Version check was added', 'Press Recalculate (Settings, at the top) – the marks were calculated before the last push.');
+  const want = CFG.COLLECTOR || ''; let seen = null; try { seen = JSON.parse(localStorage.getItem('tmsc.collVer') || 'null'); } catch (e) { }
+  if (want) add(seen ? seen.ver === want : null, 'TMS Collector', seen ? (seen.ver === want ? `running ${seen.ver} (hand-over ${tm(seen.at)})` : `running ${seen.ver} (hand-over ${tm(seen.at)}) – the delivered one is ${want}`) : `delivered ${want} – no hand-over seen on this computer yet`, 'Reload the TMS Collector in chrome://extensions (the round arrow on its card), then run it.');
+  else add(null, 'TMS Collector', 'not checked – push.bat has not yet recorded the delivered collector version', 'Run push.bat once.');
+  return rows;
+}
+function versionHtml(rows) {
+  const ic = o => o === true ? '<span class="tag ok">OK</span>' : o === false ? '<span class="tag crit">TO DO</span>' : '<span class="tag">?</span>';
+  return `<div class="scroll"><table class="t"><thead><tr><th></th><th>What</th><th>Now</th><th>What to do</th></tr></thead><tbody>${rows.map(r => `<tr><td>${ic(r.ok)}</td><td class="nw"><b>${esc(r.what)}</b></td><td>${esc(r.val)}</td><td>${r.ok === true ? '<span class="muted">–</span>' : esc(r.fix)}</td></tr>`).join('')}</tbody></table></div>
+    <p class="small muted">Files delivered to the PC but not pushed yet cannot be seen from here: the file <b>PUSH STATUS – …</b> in the TMS Control folder says that, and push.bat says "Nothing new to push" when nothing is waiting.</p>`;
+}
+async function versionBanner() {
+  const w = $('vbanner'); if (!w || role() !== 'ADMIN') return;
+  const rows = await versionCheck(); const todo = rows.filter(r => r.ok === false); if (!todo.length) { w.innerHTML = ''; return; }
+  w.innerHTML = `<div class="ban warn" style="margin:0 0 12px"><b>Version check – to do:</b> ${todo.map(r => esc(r.what + ': ' + r.fix)).join(' · ')} <a href="#" data-go2="settings">Details in Settings ›</a></div>`;
+  w.querySelectorAll('[data-go2]').forEach(a => a.onclick = e => { e.preventDefault(); S.view = a.dataset.go2; render(); });
+}
+window.versionCheck = versionCheck; window.versionHtml = versionHtml;
+
 // last upload's reconciliation of the TMS lists (admin): "N closed in TMS – M already closed here, K flagged"; held lists wait for the admin
 function reconPanel() {
   const R = S.B.recon; if (role() !== 'ADMIN' || !R || !(R.lists || []).length) return '';
-  const nm = { 'K1-INSP': 'Inspections due (K1)', 'K7-OMS': 'Repeated OMS peaks (K7)', 'K10-DEFECT': 'Locations needing attention (K10)', 'K11-IMR': 'IMR (K11)', 'K13-JOG': 'Joggled fish plates (K13)', 'K14-DFWR': 'DFWR (K14)', 'K15-OG': 'Oiling & greasing (K15)' };
+  const nm = { 'K1-INSP': 'Inspections due (K1)', 'K7-OMS': 'Repeated OMS peaks (K7)', 'K10-DEFECT': 'Locations needing attention (K10)', 'K10-DPC': 'Defects pending – other inspections / loop lines (K10)', 'K11-IMR': 'IMR (K11)', 'K13-JOG': 'Joggled fish plates (K13)', 'K14-DFWR': 'DFWR (K14)', 'K15-OG': 'Oiling & greasing (K15)' };
   const rows = R.lists.map(r => { const txt = r.held ? `${r.gone} of ${r.open} open jobs (${Math.round(r.gone / Math.max(1, r.open) * 100)} %) are no longer in TMS after one upload` : ''; return `<tr><td>${esc(nm[r.type] || r.type)}</td><td class="n">${r.open}</td><td class="n">${r.gone}</td><td class="n">${r.held ? '–' : r.already}</td><td class="n">${r.held ? '–' : r.flagged ? `<span class="od">${r.flagged}</span>` : 0}</td><td>${r.held ? `<span class="od">Held – sharp drop</span> <button class="btn secondary sm" data-rc="${esc(r.type)}" data-txt="${esc(nm[r.type] + ': ' + txt)}">Check and confirm</button>` : 'OK'}</td></tr>`; }).join('');
   return `<div class="panel body"><h3 class="sec">TMS lists after the last upload <span class="muted small">– ${esc(String(R.when).replace('T', ' ').slice(0, 16))}</span></h3><div class="scroll"><table class="t"><thead><tr><th>List</th><th>Open here before</th><th>Closed in TMS</th><th>Already closed here</th><th>Flagged</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
@@ -400,6 +439,8 @@ function kpiExplain(k, x) {
     + `<p class="small muted">Counted: foot plate / rear vehicle trips of the SSE in-charge in the inspection registers uploaded from TMS, each line of the jurisdiction separately (km by km).</p>`;
   if (k === 'K3' && x.total != null) return tbl(['km covered', 'of km', '% not covered'], [[x.covered ?? (x.total - x.missing), x.total, pct(x.total ? x.missing / x.total * 100 : 0)]])
     + (x.miss ? `<h4 style="margin:10px 0 4px">Not covered in the two months</h4><div class="small">${esc(x.miss)}</div>` : '') + `<p class="small muted">Counted: push trolley (on foot where speed > 110 km/h) by the SSE in-charge, both months.</p>`;
+  if (k === 'K10' && Array.isArray(x.byDate)) { const C = { PXING_ML: 'P&C ML', PXING_PRL: 'P&C PRL', PXING_JOINT_ML: 'Joint P&C ML', PXING_JOINT_PRL: 'Joint P&C PRL', LWR: 'LWR', SEJ: 'SEJ', BR: 'Bridge', LC: 'LC', CURVE: 'Curve', TRC: 'TRC', OMS: 'OMS', OTHER: 'Other inspections', LOOP: 'Loop line', LNA: 'LNA' };   // [E] 20-Oct
+    return tbl(['Date (1st / 11th / 21st)', 'List used', 'Pending', 'More than 10 days', '%', 'Late by category'], x.byDate.map(b => [dmy(b.date), b.src || '', b.open, b.late, pct(b.pct), Object.entries(b.lateByCat || {}).map(([c, n]) => `${C[c] || c} ${n}`).join(', ') || '–'])); }
   if (k === 'K16') { const T = { FP: 'Foot plate', RV: 'Rear vehicle', FOOT: 'On foot', TROLLEY: 'Trolley', PXING: 'P&C', PXING_JOINT: 'Joint P&C', OTHER: 'Other inspections', USFD: 'USFD', CURVE: 'Curve', LC: 'LC', LWR: 'LWR', DIAMOND: 'Diamond' };
     return tbl(['Days so far', 'Dates', 'Days by inspection type'], [[x.soFar ?? x.days, x.dates || '', Object.entries(x.byType || {}).map(([t, n]) => `${T[t] || t} ${n}`).join(', ')]]); }
   const e = Object.entries(x || {}).filter(([, v]) => v != null && typeof v !== 'object');
