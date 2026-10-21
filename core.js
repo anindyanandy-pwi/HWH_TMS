@@ -2566,6 +2566,8 @@ function inspectorMatches(insp, unit, who) {
   if (desigUnit(insp.desig) !== unit) return false;
   return who === 'incharge' ? isInCharge(insp.desig) : true;   // 'unit': any official of the unit (in-charge, sectional SSE, JE)
 }
+// [E] 21-Oct: which inspections covered a key (section|line|km) – for the line-by-line check (opts.evidence = Map)
+const evid = (M, key, i, guess) => { const [sec, ln] = key.split('|'); const k2 = sec + '|' + ln; const L = M.get(k2) || []; if (!L.some(x => x.i === i)) { L.push({ i, guess }); M.set(k2, L); } };
 function coverage(unitObj, inspections, from, to, opts = {}) {
   // Default basis = section-km (lines running parallel are covered by one inspection – IRPWM Table 1B note); opts.lineWise = per line.
   const lw = !!opts.lineWise; const need = new Map(); // key section|line|km -> seg (fastest seg kept)
@@ -2582,13 +2584,13 @@ function coverage(unitObj, inspections, from, to, opts = {}) {
     for (const sec of secs) for (let k = lo; k <= top; k++) {
       const key = `${sec}|${lw ? ln : '*'}|${k}`; const seg = need.get(key); if (!seg) continue;
       hit = true; if (opts.accept && !opts.accept(i, seg)) continue;
-      done.add(key); if (!by.has(key)) by.set(key, i.date);
+      done.add(key); if (!by.has(key)) by.set(key, i.date); if (opts.evidence) evid(opts.evidence, key, i, false);
     }
     // a route this program does not know (e.g. a new train route): an official of the unit inspected his own track, so the
     // unit's sections on the same line and km stand for it
     if (!hit && (opts.who || 'incharge') !== 'any' && !secs.some(sec => unitObj.segs.some(s => s.section === sec))) {
       for (const s of unitObj.segs) { if (opts.segFilter && !opts.segFilter(s)) continue; if (s.line !== ln) continue;
-        for (const k of kmSet(s.a, s.b)) { if (k < lo || k > top) continue; const key = `${s.section}|${lw ? s.line : '*'}|${k}`; const seg = need.get(key); if (!seg) continue; if (opts.accept && !opts.accept(i, seg)) continue; done.add(key); if (!by.has(key)) by.set(key, i.date); } }
+        for (const k of kmSet(s.a, s.b)) { if (k < lo || k > top) continue; const key = `${s.section}|${lw ? s.line : '*'}|${k}`; const seg = need.get(key); if (!seg) continue; if (opts.accept && !opts.accept(i, seg)) continue; done.add(key); if (!by.has(key)) by.set(key, i.date); if (opts.evidence) evid(opts.evidence, key, i, true); } }
     }
   }
   const missing = [...need.keys()].filter(k => !done.has(k)).map(k => { const [section, line, km] = k.split('|'); return { section, line, km: +km }; });
@@ -2837,7 +2839,31 @@ function compareJurisdiction(fileSegs, tmsSegs, tol = 50) {
   return out;
 }
 
-return { KPI, marks, reduction, desigUnit, isInCharge, buildJurisdiction, unitForLocation, routeSections, inspectorMatches, coverage, monthRange, prevMonth, kpiK2, kpiK3, kpiK16, day, addMonths, addDays, daysBetween, nextFirst, K1_DEFAULTS, assetDue, k1Overdue, kpiK1, kpiFracture, openOn, pendingDays, kpiK10, kpiK10avg, kpiK10mix, kpiK12, kpiK14, kpiK15, omsRepeated, kpiK7, kpiTRC, kpiK11, kpiK13, tmsUnit, tmsLine, compareJurisdiction, normUnit };
+// ---------- [E] 21-Oct: line by line, the way the manual monitoring sheet counts (a line is "done" only when every km of it is covered) ----------
+// For each section-line of the unit: foot plate / rear vehicle 1st–15th and 16th–end of month ym (TMS KPI-2 basis, line-wise), and
+// push trolley / on foot over the two months (TMS KPI-3 window, here line by line – TMS itself counts KPI-3 by section-km).
+// Each line lists the km still not covered and the trips that covered it (date, type, official, route, km) – the evidence to check
+// against the TMS register. guess = credited because the trip's route name is unknown here (same line + km of the unit's own track).
+function lineStatus(unitObj, insp, ym, opts = {}) {
+  const [y, m] = ym.split('-').map(Number); const ld = lastDay(y, m);
+  const a1 = `${ym}-01`, b1 = `${ym}-15`, a2 = `${ym}-16`, b2 = `${ym}-${pad(ld)}`;
+  const run = (from, to, extra) => { const ev = new Map(); const c = coverage(unitObj, insp, from, to, { ...opts, lineWise: true, evidence: ev, ...extra }); return { c, ev }; };
+  const fp1 = run(a1, b1, { types: ['FP', 'RV'] }), fp2 = run(a2, b2, { types: ['FP', 'RV'] });
+  const from3 = monthRange(prevMonth(ym, 1)).from;
+  const accept = (i, seg) => i.type === 'TROLLEY' || (i.type === 'FOOT' && (seg.speed != null && seg.speed > 110));
+  const pt = run(from3, b2, { types: ['FOOT', 'TROLLEY'], accept, who: opts.who3 || opts.who });
+  const lines = []; const seen = new Set();
+  for (const s of unitObj.segs) { const k = s.section + '|' + s.line; if (seen.has(k)) continue; seen.add(k); lines.push({ section: s.section, line: s.line, segs: unitObj.segs.filter(x => x.section === s.section && x.line === s.line) }); }
+  const part = (R, L) => { const miss = R.c.missing.filter(x => x.section === L.section && x.line === L.line).map(x => x.km).sort((p, q) => p - q);
+    const by = (R.ev.get(L.section + '|' + L.line) || []).map(e => ({ date: e.i.date, type: e.i.type, desig: e.i.desig || '', official: e.i.official || '', route: e.i.route || '', line: e.i.line || '', km: [e.i.kmA, e.i.kmB].join('–'), guess: e.guess }))
+      .sort((p, q) => p.date < q.date ? -1 : 1);
+    return { done: !miss.length, miss: kmRuns(miss), by: by.slice(0, 6), byN: by.length, guess: by.length > 0 && by.every(x => x.guess) }; };
+  return lines.map(L => ({ section: L.section, line: L.line, km: L.segs.map(s => `${r1(s.a / 1000)}–${r1(s.b / 1000)}`).join(', '), speed: Math.max(...L.segs.map(s => s.speed || 0)) || null,
+    fp1: part(fp1, L), fp2: part(fp2, L), pt: part(pt, L) }));
+}
+const kmRuns = ks => { const out = []; let a = null, p = null; for (const k of ks) { if (a == null) { a = p = k; continue; } if (k === p + 1) { p = k; continue; } out.push(a === p ? String(a) : a + '–' + p); a = p = k; } if (a != null) out.push(a === p ? String(a) : a + '–' + p); return out.join(', '); };
+
+return { KPI, marks, reduction, desigUnit, isInCharge, buildJurisdiction, unitForLocation, routeSections, inspectorMatches, coverage, monthRange, prevMonth, kpiK2, kpiK3, kpiK16, day, addMonths, addDays, daysBetween, nextFirst, K1_DEFAULTS, assetDue, k1Overdue, kpiK1, kpiFracture, openOn, pendingDays, kpiK10, kpiK10avg, kpiK10mix, kpiK12, kpiK14, kpiK15, omsRepeated, kpiK7, kpiTRC, kpiK11, kpiK13, tmsUnit, tmsLine, compareJurisdiction, lineStatus, normUnit };
 })();
 __m['dpc.js'] = (function(){
 // [E] 20-Oct-2026: TMS dashboard item 7 "Defects Pending for Compliance" – the detail page
@@ -2898,7 +2924,7 @@ function dpcFromPage(html) {
 }
 // "Pending since days" the way TMS counts it (both days counted)
 function dpcDays(date, asOn) { if (!date || !asOn) return null; return Math.round((Date.parse(asOn + 'T00:00:00Z') - Date.parse(date + 'T00:00:00Z')) / 864e5) + 1; }
-const isDpcPage = html => /Defects Pending for Compliance/i.test(String(html || '')) && /id\s*=\s*["']?(pxingtableML|othertable|looptable)/i.test(String(html || ''));
+const isDpcPage = html => /id\s*=\s*["']?(pxingtableML|othertable|looptable)\b/i.test(String(html || ''));   // 20-Oct: the tables decide (the title may be spelt "Defects - Pending …")
 
 return { DPC_CATS, DPC_NAME, DPC_ONLY, dpcFromPage, dpcDays, isDpcPage };
 })();
