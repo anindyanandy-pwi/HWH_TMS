@@ -2639,10 +2639,13 @@ function kpiK3(unitObj, insp, ym, opts = {}) {
   return { value: v, marks: marks('K3', v), detail: { ...c, forecast: true, basis: `Forecast: ${c.covered} of ${c.total} km covered in ${el} of ${len} days of the two months ${dmyS(from)} to ${dmyS(to)} (at this pace ${r1(v)} % short; ${r1(c.pct)} % not yet covered)` } };
 }
 // K16: distinct field days of the in-charge in month ym (from all inspection records available)
-function kpiK16(unit, insp, ym, who = 'incharge', asOf = null) {
+function kpiK16(unit, insp, ym, who = 'incharge', asOf = null, opts = {}) {
   const { from, to } = monthRange(ym); const days = new Set();
   const byType = {};   // every inspection recorded in TMS counts (TMS rule): FP/RV, on foot, trolley, asset registers, joint P&C, USFD, other …
-  for (const i of insp) if (i.date >= from && i.date <= to && inspectorMatches(i, unit, who)) { days.add(i.date); (byType[i.type] = byType[i.type] || new Set()).add(i.date); }
+  // [E] 22-Oct: opts.exclude = register types not counted (setting K16_EXCLUDE), opts.dateTo = a trip ending on a later day counts that day too
+  const ex = new Set((opts.exclude || []).map(x => String(x).trim().toUpperCase()).filter(Boolean));
+  const add = (i, d) => { if (d >= from && d <= to) { days.add(d); (byType[i.type] = byType[i.type] || new Set()).add(d); } };
+  for (const i of insp) if (!ex.has(String(i.type).toUpperCase()) && inspectorMatches(i, unit, who)) { add(i, i.date); if (opts.dateTo && i.dateTo && i.dateTo > i.date) add(i, i.dateTo); }
   const n = days.size; const bt = {}; for (const t of Object.keys(byType).sort()) bt[t] = byType[t].size; const now = asOf && asOf < to ? asOf : null;
   if (!now) return { value: n, marks: marks('K16', n), detail: { days: [...days].sort(), byType: bt, basis: 'Whole month (over)' } };
   const el = dayCount(from, now), len = dayCount(from, to), f = Math.min(len, Math.round(n * len / el));
@@ -2727,14 +2730,14 @@ function kpiK10mix(unit, sources, dates, fallback) {
 }
 // K12: % of AT welds found defective in their first (initial) USFD testing, welds done in the six months up to month ym.
 // welds: [{unit, month, done, tested}] from the weld register; defects: USFD weld defects seen in TMS (kept even after removal)
-function kpiK12(unit, welds, defects, ym, initialDays = 180) {
+function kpiK12(unit, welds, defects, ym, initialDays = 180, rule = 'latest') {   // [E] 22-Oct: rule 'early' = defects found within initialDays of welding (setting K12_RULE)
   const from = prevMonth(ym, 5);
   const inWin = m => m >= from && m <= ym;
   const mine = welds.filter(w => w.unit === unit && inWin(w.month));
   const done = mine.reduce((a, w) => a + (+w.done || 0), 0), tested = mine.reduce((a, w) => a + (+w.tested || 0), 0);
   // [E] 16-Oct: TMS rule (AT Welds Done/Defective report) – welds done in the six months whose LATEST USFD result is defective, of those tested.
   // Used when the weld register gave the latest result (WeldMonths.Defective); else the older reading from USFD defect lists below.
-  if (mine.some(w => w.defective != null && w.defective !== '')) { const def = mine.reduce((a, w) => a + (+w.defective || 0), 0);
+  if (rule !== 'early' && mine.some(w => w.defective != null && w.defective !== '')) { const def = mine.reduce((a, w) => a + (+w.defective || 0), 0);
     if (!tested) return { value: null, marks: def ? 0 : null, detail: { done, tested, defective: def, from, to: ym } };
     const v = def / tested * 100; return { value: v, marks: marks('K12', v), detail: { done, tested, defective: def, from, to: ym, basis: `Latest USFD result: ${def} of ${tested} tested AT welds (done ${from} to ${ym}) defective` } }; }
   const seen = new Set(); const bad = [];
@@ -2794,6 +2797,19 @@ function kpiK7(unit, oms, J) {
 }
 
 // ---------- K8/K9: TRC counts per unit (latest run vs previous run) ----------
+// [E] 21-Oct: K8 / K9 as TMS counts them – REPEATED UML peak locations / repeated CBML blocks of the SSE (TMS dashboard lists,
+// see trcrep.js) open on the day of the marks, compared with the 1st of the month before (% reduction, the K5–K9 bands).
+// None open = full marks; open ones without a known count a month earlier = no reduction shown = 0 (what TMS gave in September).
+function kpiTRCrep(k, items, unit, asOn, prevOn) {
+  const mine = items.filter(i => i.unit === unit); const open = openOn(mine, asOn);
+  const cur = open.length; const prev = prevOn ? openOn(mine, prevOn).length : null;
+  const list = open.slice(0, 30).map(i => [i.section, i.line, i.km != null ? i.km + '/' + (i.m == null ? '' : i.m) : '', i.block != null ? 'block ' + i.block : '', i.run ? 'run ' + i.run : '', i.repeated != null ? 'repeated ' + i.repeated + '×' : ''].filter(Boolean).join(' '));
+  const what = k === 'K8' ? 'repeated UML peak locations' : 'repeated CBML blocks';
+  if (!cur) return { value: prev ? 100 : 0, marks: KPI[k].max, detail: { cur, prev, list, basis: `TMS rule: no ${what} on TMS's list for this SSE` } };
+  if (prev == null) return { value: null, marks: 0, detail: { cur, prev, list, basis: `TMS rule: ${cur} ${what} on TMS's list; the count a month earlier is not known here, so no reduction can be shown (0 marks)` } };
+  const v = reduction(prev, cur);
+  return { value: v, marks: marks(k, v), detail: { cur, prev, list, basis: `TMS rule: ${what} on TMS's list – ${prev} a month earlier, ${cur} now` } };
+}
 function kpiTRC(k, cur, prev) { if (cur == null) return { value: null, marks: null, detail: {} }; const v = reduction(prev, cur); return { value: prev == null ? null : v, marks: prev == null ? null : marks(k, v), detail: { cur, prev } }; }
 
 // ---------- K11: IMRs (tested in month) removed after more than 3 days ----------
@@ -2863,7 +2879,7 @@ function lineStatus(unitObj, insp, ym, opts = {}) {
 }
 const kmRuns = ks => { const out = []; let a = null, p = null; for (const k of ks) { if (a == null) { a = p = k; continue; } if (k === p + 1) { p = k; continue; } out.push(a === p ? String(a) : a + '–' + p); a = p = k; } if (a != null) out.push(a === p ? String(a) : a + '–' + p); return out.join(', '); };
 
-return { KPI, marks, reduction, desigUnit, isInCharge, buildJurisdiction, unitForLocation, routeSections, inspectorMatches, coverage, monthRange, prevMonth, kpiK2, kpiK3, kpiK16, day, addMonths, addDays, daysBetween, nextFirst, K1_DEFAULTS, assetDue, k1Overdue, kpiK1, kpiFracture, openOn, pendingDays, kpiK10, kpiK10avg, kpiK10mix, kpiK12, kpiK14, kpiK15, omsRepeated, kpiK7, kpiTRC, kpiK11, kpiK13, tmsUnit, tmsLine, compareJurisdiction, lineStatus, normUnit };
+return { KPI, marks, reduction, desigUnit, isInCharge, buildJurisdiction, unitForLocation, routeSections, inspectorMatches, coverage, monthRange, prevMonth, kpiK2, kpiK3, kpiK16, day, addMonths, addDays, daysBetween, nextFirst, K1_DEFAULTS, assetDue, k1Overdue, kpiK1, kpiFracture, openOn, pendingDays, kpiK10, kpiK10avg, kpiK10mix, kpiK12, kpiK14, kpiK15, omsRepeated, kpiK7, kpiTRCrep, kpiTRC, kpiK11, kpiK13, tmsUnit, tmsLine, compareJurisdiction, lineStatus, normUnit };
 })();
 __m['dpc.js'] = (function(){
 // [E] 20-Oct-2026: TMS dashboard item 7 "Defects Pending for Compliance" – the detail page
@@ -2927,6 +2943,65 @@ function dpcDays(date, asOn) { if (!date || !asOn) return null; return Math.roun
 const isDpcPage = html => /id\s*=\s*["']?(pxingtableML|othertable|looptable)\b/i.test(String(html || ''));   // 20-Oct: the tables decide (the title may be spelt "Defects - Pending …")
 
 return { DPC_CATS, DPC_NAME, DPC_ONLY, dpcFromPage, dpcDays, isDpcPage };
+})();
+__m['trcrep.js'] = (function(){
+// [E] 21-Oct-2026: K8 / K9 the way TMS counts them. Found live (read-only, 21-Oct): TMS's September marks K9 = 0 for exactly the
+// 9 SSEs on the TMS dashboard list "Repeated Blocks having CBML" (PopUpNBMLRepeatedLocDetails.jsp) and 5 for everyone else
+// (23/23); K8 = 0 for every SSE on "Repeated UML Peaks" (PopUpRepeatedTRCUMLPeakLocations.jsp) whose run was before the 1st.
+// So KPI-8 / KPI-9 "% reduction in UML peaks / CBML blocks in TRC" count REPEATED locations (a peak / block found again in
+// the following run), like K7 for OMS – not all UML peaks / CBML blocks of the latest run (that rule matched only 5/19 and 9/19).
+// Each list = one table #datatable: Sr# | Railway | Division | Sr.DEN | ADEN | SSE | TMS Section | Line | Block Section/Yard |
+// Location From km m | Location To km m | (Block No.) | Section Speed | Route Classification | TRC Run Date | TRC Run No. |
+// Repeated Count | links. Works without a browser DOM (Apps Script tests, Node, the admin page).
+const {decode} = __m['tmstable.js'];
+const {tmsUnit} = __m['kpi.js'];
+
+const strip = s => decode(String(s == null ? '' : s).replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+const isoDMY = s => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(s || '').trim()); return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : ''; };
+const num = s => { const t = String(s == null ? '' : s).trim(); return t !== '' && !isNaN(+t) ? +t : null; };
+
+/** which list a page is: 'UML' | 'CBML' | null */
+function trcRepKind(html) {
+  const h = String(html || '');
+  if (!/Repeated\s*(<br\s*\/?>)?\s*Count/i.test(h)) return null;
+  if (/Repeated\s+Blocks\s+having\s+CBML/i.test(h) || /Block\s*No\./i.test(h)) return 'CBML';
+  if (/Repeated\s+UML\s+Peaks/i.test(h) || /UML\s*Peaks/i.test(h)) return 'UML';
+  return null;
+}
+const isTrcRepPage = html => !!trcRepKind(html);
+
+/** rows of one list: {list, sse, unit, section, line, place, km, m, kmTo, mTo, block, speed, route, run, runNo, repeated, key} */
+function trcRepFromPage(html) {
+  html = String(html || ''); const list = trcRepKind(html); if (!list) return [];
+  const out = []; const seen = {};
+  const re = /<table\b([^>]*)>([\s\S]*?)<\/table>/gi; let m;
+  while ((m = re.exec(html))) {
+    const rows = [...m[2].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => [...r[1].matchAll(/<(t[hd])\b([^>]*)>([\s\S]*?)<\/t[hd]>/gi)]
+      .map(c => ({ th: c[1].toLowerCase() === 'th', span: +((/colspan\s*=\s*["']?(\d+)/i.exec(c[2]) || [])[1] || 1), t: strip(c[3]) })));
+    const hi = rows.findIndex(r => r.some(c => /^SSE$/i.test(c.t)) && r.some(c => /Repeated\s*Count/i.test(c.t))); if (hi < 0) continue;
+    const head = rows[hi]; const sub = rows[hi + 1] && rows[hi + 1].length && rows[hi + 1].every(c => c.th) ? rows[hi + 1] : [];
+    const cols = []; let si = 0;
+    head.forEach(c => { if (c.span > 1) { for (let k = 0; k < c.span; k++) cols.push((c.t + ' ' + ((sub[si++] || {}).t || '')).trim()); } else cols.push(c.t); });
+    const ci = rx => cols.findIndex(c => rx.test(c));
+    const iSSE = ci(/^SSE$/i), iSec = ci(/^TMS Section$|^Section$/i), iLine = ci(/^Line$/i), iPlace = ci(/Block Section/i), iKm = ci(/^Location From km$/i), iM = ci(/^Location From m$/i),
+      iKmTo = ci(/^Location To km$/i), iMTo = ci(/^Location To m$/i), iBlock = ci(/^Block No\.?$/i), iSpeed = ci(/Section Speed/i), iRoute = ci(/Route/i),
+      iRun = ci(/TRC Run Date/i), iRunNo = ci(/TRC Run No/i), iRep = ci(/Repeated\s*Count/i);
+    for (const r of rows.slice(hi + 1)) {
+      if (!r.length || !/^\d+$/.test(r[0].t) || r.some(c => c.th)) continue;
+      const v = i => (i >= 0 && r[i] ? r[i].t : '');
+      const sse = v(iSSE);
+      const o = { list, sse, unit: tmsUnit(sse) || '', section: v(iSec), line: v(iLine), place: v(iPlace), km: num(v(iKm)), m: num(v(iM)), kmTo: num(v(iKmTo)), mTo: num(v(iMTo)),
+        block: num(v(iBlock)), speed: num(v(iSpeed)), route: v(iRoute), run: isoDMY(v(iRun)), runNo: v(iRunNo), repeated: num(v(iRep)) };
+      // the key leaves out the run: the same location found again in a later run stays one item (its run / count are updated)
+      const base = ['R' + list, o.unit, o.section, o.line, o.km, o.m, o.block == null ? '' : o.block].join('|');
+      seen[base] = (seen[base] || 0) + 1; o.key = seen[base] > 1 ? base + '|' + seen[base] : base;
+      out.push(o);
+    }
+  }
+  return out;
+}
+
+return { trcRepKind, isTrcRepPage, trcRepFromPage };
 })();
 __m['shotocr.js'] = (function(){
 // Screenshot reader for TMS web report pages (OMS peaks comparative summary, OMS accn. peaks, IMR testing history …).
@@ -3403,9 +3478,10 @@ const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
 const {htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage} = __m['tmshtml.js'];
 const {dpcFromPage, isDpcPage, DPC_NAME} = __m['dpc.js'];   // [E] 20-Oct: Defects Pending for Compliance (K10)
+const {trcRepFromPage, isTrcRepPage, trcRepKind} = __m['trcrep.js'];   // [E] 21-Oct: repeated UML peaks / CBML blocks (K8 / K9)
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME, trcRepFromPage, isTrcRepPage, trcRepKind };
 
 return { CORE };
 })();
