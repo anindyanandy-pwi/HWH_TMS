@@ -120,7 +120,19 @@ async function joinScreen() {
   };
   ask('');
 }
+// [E] 22-Oct: every user, every start – if the website already has a newer build than this page (a saved copy on the device), clear the
+// saved copy and load the new one (once per build; offline or no answer = carry on with what is here).
+async function freshCheck() {
+  try { const site = await fetch('build.json?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.json() : null); const have = CFG.VERSION || '';
+    if (!site || !site.web || !have || site.web <= have) return false;
+    const k = 'tmsc.heal.' + site.web; if (sessionStorage.getItem(k)) return false; sessionStorage.setItem(k, '1');
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+    if (window.caches) for (const x of await caches.keys()) await caches.delete(x);
+    location.reload(); return true;
+  } catch (e) { return false; }
+}
 async function boot() {
+  if (window.__TMSC_HEALING || await freshCheck()) return;
   if (!CFG.API) { $('boot').innerHTML = '<div class="denied"><h2>Not set up</h2><p>The app address of the server is missing (config.js). The admin has to run push.bat.</p></div>'; return; }
   if (!TOKEN && !KEY) { joinScreen(); return; }
   try {
@@ -130,9 +142,11 @@ async function boot() {
     $('selUnit').onchange = () => { S.unit = $('selUnit').value; render(); };
     if (window.UI) UI.defaultLang(u.Role);
     $('railFoot').innerHTML = (window.UI ? UI.credit({ br: true }) + '<div style="margin-top:6px">' : '<div>') + `v${esc(S.B.app.version)} · app ${esc(CFG.VERSION || '')} · today ${dmy(S.B.today)}</div>`;
+    // [C] 22-Oct: staff who run the TMS Collector (Users → "May upload collected TMS data") get the upload page too
+    if (role() !== 'ADMIN' && String(u.CanUpload || '').toLowerCase() === 'yes' && NAVS[role()] && !NAVS[role()].some(x => x[0] === 'upload')) NAVS[role()] = NAVS[role()].concat([['#Data'], ['upload', 'Upload data']]);
     S.view = (NAVS[role()] || NAVS.VIEWER)[0][0];
     $('rail').classList.remove('hidden');
-    if (role() === 'ADMIN') await loadAdmin();
+    if (role() === 'ADMIN' || String(u.CanUpload || '').toLowerCase() === 'yes') await loadAdmin();   // [C] 22-Oct: + staff who may upload
     await loadAll();
     if (window.TMSC_FIELD) window.TMSC_FIELD.start();
   } catch (e) { if (!e.access) { $('boot').innerHTML = `<div class="denied"><h2>Could not load</h2><p>${esc(e.error || e)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`; } }
