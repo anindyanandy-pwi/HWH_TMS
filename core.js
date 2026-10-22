@@ -2963,12 +2963,42 @@ const num = s => { const t = String(s == null ? '' : s).trim(); return t !== '' 
 /** which list a page is: 'UML' | 'CBML' | null */
 function trcRepKind(html) {
   const h = String(html || '');
+  // [E] 22-Oct: "TRC (UML) Locations Pending for Compliance" (dashboard TRC-UML → PopUpTRCDetails.jsp?…&repflag=UML-ALL)
+  if (/Locations\s+Pending\s+for\s+Compliance/i.test(h) && /Parameter/i.test(h) && /Peak/i.test(h)) return 'UMLP';
   if (!/Repeated\s*(<br\s*\/?>)?\s*Count/i.test(h)) return null;
   if (/Repeated\s+Blocks\s+having\s+CBML/i.test(h) || /Block\s*No\./i.test(h)) return 'CBML';
   if (/Repeated\s+UML\s+Peaks/i.test(h) || /UML\s*Peaks/i.test(h)) return 'UML';
   return null;
 }
 const isTrcRepPage = html => !!trcRepKind(html);
+
+/** [E] 22-Oct: TMS's UML locations still pending for compliance – {list:'UMLP', sse, unit, section, line, param, peak, km, m, run, key}.
+ *  TMS takes a UML location off this list when the SSE enters its compliance – our TRC-UML jobs not on it are closed (05_Jobs). */
+function umlPendFromPage(html) {
+  html = String(html || ''); if (trcRepKind(html) !== 'UMLP') return [];
+  const out = []; const seen = {};
+  const re = /<table\b([^>]*)>([\s\S]*?)<\/table>/gi; let m;
+  while ((m = re.exec(html))) {
+    const rows = [...m[2].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => [...r[1].matchAll(/<(t[hd])\b([^>]*)>([\s\S]*?)<\/t[hd]>/gi)]
+      .map(c => ({ th: c[1].toLowerCase() === 'th', span: +((/colspan\s*=\s*["']?(\d+)/i.exec(c[2]) || [])[1] || 1), t: strip(c[3]) })));
+    const hi = rows.findIndex(r => r.some(c => /^SSE$/i.test(c.t)) && r.some(c => /^Parameter$/i.test(c.t))); if (hi < 0) continue;
+    const head = rows[hi]; const sub = rows[hi + 1] && rows[hi + 1].length && rows[hi + 1].every(c => c.th) ? rows[hi + 1] : [];
+    const cols = []; let si = 0;
+    head.forEach(c => { if (c.span > 1) { for (let k = 0; k < c.span; k++) cols.push((c.t + ' ' + ((sub[si++] || {}).t || '')).trim()); } else cols.push(c.t); });
+    const ci = rx => cols.findIndex(c => rx.test(c));
+    const iSSE = ci(/^SSE$/i), iSec = ci(/^Section$/i), iLine = ci(/^Line$/i), iPar = ci(/^Parameter$/i), iPeak = ci(/^Peak$/i), iKm = ci(/^Location km$/i), iM = ci(/^Location m$/i), iRun = ci(/TRC\s*Run Date/i), iSpeed = ci(/Speed/i);
+    for (const r of rows.slice(hi + 1)) {
+      if (!r.length || !/^\d+$/.test(r[0].t) || r.some(c => c.th)) continue;
+      const v = i => (i >= 0 && r[i] ? r[i].t : '');
+      const sse = v(iSSE);
+      const o = { list: 'UMLP', sse, unit: tmsUnit(sse) || '', section: v(iSec), line: v(iLine), param: v(iPar), peak: num(v(iPeak)), km: num(v(iKm)), m: num(v(iM)), speed: num(v(iSpeed)), run: isoDMY(v(iRun)) };
+      const base = ['RUMLP', o.unit, o.section, o.line, o.km, o.m, o.param].join('|');
+      seen[base] = (seen[base] || 0) + 1; o.key = seen[base] > 1 ? base + '|' + seen[base] : base;
+      out.push(o);
+    }
+  }
+  return out;
+}
 
 /** rows of one list: {list, sse, unit, section, line, place, km, m, kmTo, mTo, block, speed, route, run, runNo, repeated, key} */
 function trcRepFromPage(html) {
@@ -3001,7 +3031,7 @@ function trcRepFromPage(html) {
   return out;
 }
 
-return { trcRepKind, isTrcRepPage, trcRepFromPage };
+return { trcRepKind, isTrcRepPage, umlPendFromPage, trcRepFromPage };
 })();
 __m['shotocr.js'] = (function(){
 // Screenshot reader for TMS web report pages (OMS peaks comparative summary, OMS accn. peaks, IMR testing history …).
@@ -3478,10 +3508,10 @@ const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
 const {htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage} = __m['tmshtml.js'];
 const {dpcFromPage, isDpcPage, DPC_NAME} = __m['dpc.js'];   // [E] 20-Oct: Defects Pending for Compliance (K10)
-const {trcRepFromPage, isTrcRepPage, trcRepKind} = __m['trcrep.js'];   // [E] 21-Oct: repeated UML peaks / CBML blocks (K8 / K9)
+const {trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage} = __m['trcrep.js'];   // [E] 21-Oct: repeated UML peaks / CBML blocks (K8 / K9)
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME, trcRepFromPage, isTrcRepPage, trcRepKind };
+const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME, trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage };
 
 return { CORE };
 })();
