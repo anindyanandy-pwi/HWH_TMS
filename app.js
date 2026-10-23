@@ -11,6 +11,8 @@ const UA = (() => { const u = navigator.userAgent; const m = u.match(/Android [\
 
 // personal link: ?t=… is kept on this phone and removed from the address bar
 (() => { const q = new URLSearchParams(location.search); const t = q.get('t'); if (t) { try { localStorage.setItem('tmsc.token', t); } catch (e) { } history.replaceState(null, '', location.pathname); } })();
+// [E] 23-Oct: invite link / QR ?i=… – kept for this tab only and removed from the address bar
+(() => { const q = new URLSearchParams(location.search); const i = q.get('i'); if (i) { try { sessionStorage.setItem('tmsc.invite', i); } catch (e) { } history.replaceState(null, '', location.pathname); } })();
 let TOKEN = ''; try { TOKEN = localStorage.getItem('tmsc.token') || ''; } catch (e) { }
 let KEY = ''; try { KEY = localStorage.getItem('tmsc.key') || ''; } catch (e) { }   // phone key from signing in with the mobile number (common link)
 
@@ -36,7 +38,7 @@ async function call(fn, args, opt = {}) {
   }
   setNet(true);
   if (r.ok) { if (ck) ST.set('kv', ck, { at: new Date().toISOString(), data: r.data }).catch(() => { }); return r.data; }
-  if (r.access) denied(r.error, r.pending);
+  if (r.access) denied(r.error, r.pending, r.pend);
   throw r;
 }
 // sign-in / access screens: logo, product name in both languages, credit (redesign 16-Oct)
@@ -44,8 +46,9 @@ function signinWrap(inner) {
   document.body.classList.add('signedout'); const A = window.UI ? UI.APP : null;
   return A ? `<div class="signin"><img class="slogo" src="${A.logo}" alt=""><h1>${A.name}</h1><div class="shi">${A.nameHi}</div><div class="sorg">${A.org} · ${A.orgHi}</div>${inner}<div class="creditcard">${UI.credit({ br: true, full: true })}</div></div>` : inner;
 }
-function denied(msg, pending) {
+function denied(msg, pending, pend) {
   $('rail').classList.add('hidden'); $('boot').classList.add('hidden'); $('banner').innerHTML = '';
+  if (pending && pend) { waitScreen(pend, null); return; }   // [E] 23-Oct: personal link on a further phone – QR + code for the AEN / admin
   const m = esc(String(msg).replace(/^ACCESS(_PENDING)?:\s*/, ''));
   $('views').innerHTML = signinWrap(pending
     ? `<div class="denied" style="border-top-color:var(--warn)"><div class="eyebrow">New phone</div><h2>Waiting for approval</h2><p>${m}</p><p class="muted">Keep this app open or come back later – it checks again every 30 seconds.</p><button class="btn primary" id="reTry">Check now</button><p class="small muted" style="margin-top:14px">Phone: ${esc(UA)}</p></div>`
@@ -72,11 +75,11 @@ const rems = () => (S.B.reminders || []).filter(inUnit);
 const NAVS = {
   JE: [['work', 'My work'], ['insp', 'Inspections due'], ['records', 'My work records'], ['position', 'My position'], ['done', 'Done & closed']],
   SSE: [['work', 'My work'], ['insp', 'Inspections due'], ['review', 'Check JE work'], ['records', 'Work records'], ['position', 'My position'], ['kpi', 'KPI detail'], ['done', 'Done & closed']],
-  AEN: [['review', 'Approve work'], ['insp', 'Inspections due'], ['overview', 'Units'], ['lag', 'Lagging units'] /* [E] 22-Oct */, ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['chronic', 'Chronic locations']],
+  AEN: [['review', 'Approve work'], ['access', 'Sign-in approvals'] /* [E] 23-Oct */, ['insp', 'Inspections due'], ['overview', 'Units'], ['lag', 'Lagging units'] /* [E] 22-Oct */, ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['chronic', 'Chronic locations']],
   SRDEN: [['overview', 'Overview'], ['lag', 'Lagging units'] /* [E] 22-Oct */, ['insp', 'Inspections due'], ['review', 'Pending reviews'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['plan', 'Machine plan'], ['chronic', 'Chronic locations']],
   SRDENC: [['overview', 'Division'], ['lag', 'Lagging units'] /* [E] 22-Oct */, ['insp', 'Inspections due'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations']],
   VIEWER: [['overview', 'Division'], ['lag', 'Lagging units'] /* [E] 22-Oct */, ['insp', 'Inspections due'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['position', 'KPI standing'], ['kpi', 'KPI by unit']],
-  ADMIN: [['overview', 'Division'], ['lag', 'Lagging units'] /* [E] 22-Oct */, ['insp', 'Inspections due'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations'], ['#Admin'], ['upload', 'Upload data'], ['users', 'Users'], ['settings', 'Settings'], ['uploads', 'Upload history']]
+  ADMIN: [['overview', 'Division'], ['lag', 'Lagging units'] /* [E] 22-Oct */, ['insp', 'Inspections due'], ['review', 'Pending reviews'], ['forecast', 'CBML forecast'], ['plan', 'Machine plan'], ['urgent', 'Overdue & urgent'], ['jobs', 'All jobs'], ['records', 'Work records'], ['position', 'KPI standing'], ['kpi', 'KPI by unit'], ['chronic', 'Chronic locations'], ['#Admin'], ['access', 'Sign-in approvals'] /* [E] 23-Oct */, ['upload', 'Upload data'], ['users', 'Users'], ['settings', 'Settings'], ['uploads', 'Upload history']]
 };
 const OPEN = ['Open', 'In progress', 'Returned', 'Still defective'];
 const isOpen = j => OPEN.includes(j.Status);
@@ -87,35 +90,76 @@ window.TMSC.NAVS = NAVS;   // [H] 19-Oct: health.js adds its menu entries (Track
 window.TMSC.versionBanner = () => versionBanner();   // [H] 19-Oct: the admin's Version check banner also on Track health (the admin's first screen)
 window.TMSC.isOpen = isOpen; window.TMSC.inUnit = inUnit; window.TMSC.role = () => role(); window.TMSC.recMode = recMode; window.TMSC.OPEN = OPEN;
 
-// ---------- sign in on the common link (the plain app address): mobile number + name + designation, no approval ----------
+// ---------- [E] 23-Oct: SECURE SIGN-IN – the plain link gives a request (QR + 6-digit code) that the AEN (own JEs / SSEs) or the admin
+// approves; an invite link / QR signs the phone in once. Nobody gets in on a mobile number alone. ----------
+const newKey = () => Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2, '0')).join('');
+const fmtCode = c => String(c || '').replace(/(\d{3})(\d{3})/, '$1 $2');
+const signDraw = (title, inner) => { $('rail').classList.add('hidden'); $('boot').classList.add('hidden'); $('banner').innerHTML = ''; $('views').innerHTML = signinWrap(`<div class="denied"><h2>${window.UI ? UI.title(title) : title}</h2>${inner}<p class="small muted" style="margin-top:16px">Phone: ${esc(UA)}</p></div>`); };
+/** waiting for the approver: QR (request id + code) and the code to read out; key = this phone's own key (plain link), null = personal link */
+function waitScreen(p, key) {
+  const qr = window.TMSC_QR ? TMSC_QR.svg('TMSC1|' + p.req + '|' + p.code, 220) : '';
+  let stop = false; const until = Date.parse(String(p.expires).replace(' ', 'T') + '+05:30');
+  const draw = (msg, done) => signDraw('Waiting for approval', `<p><b>${esc(p.name || '')}</b>${p.role ? ' · ' + esc(p.role) : ''}${p.scope ? ' · ' + esc(p.scope) : ''}</p>
+    <p>This phone is not signed in yet. Show this to <b>${esc(p.approver || 'your AEN or the division office')}</b> – they scan the QR, or you read out the code on a call.</p>
+    <div style="text-align:center;margin:12px 0">${qr}<div style="font:700 34px/1.2 ui-monospace,Consolas,monospace;letter-spacing:4px;margin-top:8px" id="wCode">${fmtCode(p.code)}</div><div class="small muted" id="wLeft"></div></div>
+    ${msg ? `<p class="${done ? 'od' : 'muted'}">${esc(msg)}</p>` : '<p class="small muted">This page opens by itself as soon as it is approved.</p>'}
+    <button class="btn secondary" id="wAgain">Start again</button>`);
+  const again = () => { stop = true; try { localStorage.removeItem('tmsc.pend'); } catch (e) { } if (key) { try { localStorage.removeItem('tmsc.pendkey'); } catch (e) { } joinScreen(); } else location.reload(); };
+  draw(''); $('wAgain').onclick = again;
+  const tick = async () => {
+    if (stop) return; const left = Math.max(0, Math.round((until - Date.now()) / 1000)); const el = $('wLeft'); if (el) el.textContent = left ? `code valid for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} min` : 'code expired';
+    if (!left) { draw('The code has expired – start again for a new one.', true); $('wAgain').onclick = again; return; }
+    try {
+      if (key) { const r = await call('reqStatus', { req: p.req, key });
+        if (r.status === 'approved') { stop = true; try { localStorage.setItem('tmsc.key', key); localStorage.removeItem('tmsc.token'); localStorage.removeItem('tmsc.pend'); localStorage.removeItem('tmsc.pendkey'); } catch (e) { } location.reload(); return; }
+        if (r.status === 'rejected') { stop = true; try { localStorage.removeItem('tmsc.pend'); } catch (e) { } draw(`Not approved${r.by ? ' by ' + r.by : ''}. Speak to your AEN or the division office.`, true); $('wAgain').onclick = again; return; }
+        if (r.status === 'expired') { draw('The code has expired – start again for a new one.', true); $('wAgain').onclick = again; return; } }
+      else { const res = await fetchT(CFG.API, { method: 'POST', body: JSON.stringify({ t: TOKEN, k: '', d: DEV, ua: UA, fn: 'bootstrap', args: {} }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } }, 60000).then(x => x.json());
+        if (res.ok) { stop = true; location.reload(); return; } }
+    } catch (e) { }
+    setTimeout(tick, key ? 4000 : 8000);
+  };
+  setTimeout(tick, 1000);
+}
+/** an invite link / QR: this phone is signed in once as the invited person */
+async function inviteScreen(inv) {
+  signDraw('Sign in', '<div class="empty">Opening your invite…</div>');
+  const key = newKey();
+  try { const r = await call('acceptInvite', { i: inv, key }); try { sessionStorage.removeItem('tmsc.invite'); localStorage.setItem('tmsc.key', key); localStorage.removeItem('tmsc.token'); } catch (e) { }
+    signDraw('Welcome', `<p><b>${esc(r.name)}</b> · ${esc(r.role)}${r.scope ? ' · ' + esc(r.scope) : ''}</p><p>This phone is now signed in. Opening the app…</p>`); setTimeout(() => location.reload(), 1200); }
+  catch (e) { try { sessionStorage.removeItem('tmsc.invite'); } catch (x) { } signDraw('Invite', `<p class="od">${esc((e && e.error) || e)}</p><button class="btn primary" id="iJoin">Sign in another way</button>`); $('iJoin').onclick = () => joinScreen(); }
+}
+// sign in on the plain link: mobile number → a request (QR + code) for the AEN / admin; a number not in the staff list adds name and designation
 async function joinScreen() {
-  $('rail').classList.add('hidden'); $('boot').classList.add('hidden'); $('banner').innerHTML = '';
-  const draw = inner => { $('views').innerHTML = signinWrap(`<div class="denied"><h2>${window.UI ? UI.title('Sign in') : 'Sign in'}</h2>${inner}<p class="small muted" style="margin-top:16px">Phone: ${esc(UA)}</p></div>`); };
+  try { const p = JSON.parse(localStorage.getItem('tmsc.pend') || 'null'), k = localStorage.getItem('tmsc.pendkey'); if (p && k && Date.parse(String(p.expires).replace(' ', 'T') + '+05:30') > Date.now()) { waitScreen(p, k); return; } } catch (e) { }
+  const draw = inner => signDraw('Sign in', inner);
   draw('<div class="empty">Loading…</div>');
   let O; try { O = await call('joinOptions'); } catch (e) { draw(`<p class="od">${esc((e && e.error) || e)}</p><button class="btn primary" onclick="location.reload()">Try again</button>`); return; }
-  const v = { mobile: '', name: '', post: '', charge: '' };
+  let key = ''; try { key = localStorage.getItem('tmsc.pendkey') || ''; if (!key) { key = newKey(); localStorage.setItem('tmsc.pendkey', key); } } catch (e) { key = newKey(); }
+  const v = { mobile: '', name: '', post: '', charge: '', details: false };
   const chargeSel = post => { const P = O.posts.find(x => x.id === post); if (!P || !P.need) return '';
     const list = P.need === 'unit' ? O.units.map(u => [u.unit, u.unit + (u.label && u.label !== u.unit ? ' – ' + u.label : '')]) : (P.need === 'aen' ? O.aens : O.srdens).map(x => [x, x]);
     return `<div class="fld"><label>${P.need === 'unit' ? 'Unit (SSE section)' : P.need === 'aen' ? 'AEN charge' : 'Sr DEN charge'}</label><select id="jCh"><option value="">– choose –</option>${list.map(([k, t]) => `<option value="${esc(k)}" ${k === v.charge ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>`; };
   const ask = msg => {
-    draw(`<p>Enter your details once. The app then opens directly on this phone.</p>${msg ? `<p class="od">${esc(msg)}</p>` : ''}
+    draw(`${v.details ? '<p>This number is not in the division\'s staff list. Give your details – your AEN or the division office will check and approve.</p>' : '<p>Enter your mobile number. Your AEN or the division office then approves this phone – or open the invite link they sent you.</p>'}${msg ? `<p class="od">${esc(msg)}</p>` : ''}
       <div class="fld"><label>Mobile number</label><input id="jMob" inputmode="tel" autocomplete="tel" maxlength="16" placeholder="10-digit mobile number" value="${esc(v.mobile)}" style="font-size:17px"></div>
-      <div class="fld"><label>Full name</label><input id="jName" autocomplete="name" maxlength="60" placeholder="e.g. Ravi Das" value="${esc(v.name)}" style="font-size:17px"></div>
+      ${v.details ? `<div class="fld"><label>Full name</label><input id="jName" autocomplete="name" maxlength="60" placeholder="e.g. Ravi Das" value="${esc(v.name)}" style="font-size:17px"></div>
       <div class="fld"><label>Designation</label><select id="jPost"><option value="">– choose –</option>${O.posts.map(p => `<option value="${esc(p.id)}" ${p.id === v.post ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}</select></div>
-      <div id="jChBox">${chargeSel(v.post)}</div><button class="btn primary" id="jGo" style="margin-top:6px">Sign in</button>`);
-    const keep = () => { v.mobile = $('jMob').value; v.name = $('jName').value; v.post = $('jPost').value; v.charge = $('jCh') ? $('jCh').value : ''; };
-    $('jPost').onchange = () => { keep(); v.charge = ''; $('jChBox').innerHTML = chargeSel(v.post); };
-    $('jGo').onclick = () => { keep(); const P = O.posts.find(x => x.id === v.post);
-      const miss = []; if (String(v.mobile).replace(/\D/g, '').length < 10) miss.push('mobile number'); if (v.name.trim().length < 3) miss.push('full name'); if (!P) miss.push('designation'); else if (P.need && !v.charge) miss.push(P.need === 'unit' ? 'unit' : 'charge');
+      <div id="jChBox">${chargeSel(v.post)}</div>` : ''}<button class="btn primary" id="jGo" style="margin-top:6px">${v.details ? 'Send for approval' : 'Next'}</button>`);
+    const keep = () => { v.mobile = $('jMob').value; if (v.details) { v.name = $('jName').value; v.post = $('jPost').value; v.charge = $('jCh') ? $('jCh').value : ''; } };
+    if (v.details) $('jPost').onchange = () => { keep(); v.charge = ''; $('jChBox').innerHTML = chargeSel(v.post); };
+    $('jGo').onclick = () => { keep(); const miss = []; if (String(v.mobile).replace(/\D/g, '').length < 10) miss.push('mobile number');
+      if (v.details) { const P = O.posts.find(x => x.id === v.post); if (v.name.trim().length < 3) miss.push('full name'); if (!P) miss.push('designation'); else if (P.need && !v.charge) miss.push(P.need === 'unit' ? 'unit' : 'charge'); }
       if (miss.length) { ask('Fill in: ' + miss.join(', ')); return; } go(); };
   };
   const go = async pick => {
     const b = $('jGo'); if (b) b.disabled = true;
     try {
-      const r = await call('join', Object.assign({}, v, { pick }));
+      const r = await call('join', Object.assign({ mobile: v.mobile, key }, v.details ? { name: v.name, post: v.post, charge: v.charge } : {}, { pick }));
       if (r.choose) { draw(`<p>More than one person is registered with this number. Who are you?</p>${r.choose.map(c => `<button class="btn secondary" style="display:block;margin:6px 0;width:100%;text-align:left" data-p="${esc(c.id)}"><b>${esc(c.name)}</b> · ${esc(c.role)}${c.scope ? ' · ' + esc(c.scope) : ''}</button>`).join('')}`); $('views').querySelectorAll('[data-p]').forEach(x => x.onclick = () => go(x.dataset.p)); return; }
-      try { localStorage.setItem('tmsc.key', r.key); localStorage.removeItem('tmsc.token'); } catch (e) { }
-      location.reload();
+      if (r.needDetails) { v.details = true; ask(''); return; }
+      if (r.pending) { try { localStorage.setItem('tmsc.pend', JSON.stringify(r.pending)); } catch (e) { } waitScreen(r.pending, key); return; }
+      ask('Unexpected answer from the server – try again.');
     } catch (e) { ask((e && e.error) || String(e)); }
   };
   ask('');
@@ -134,6 +178,8 @@ async function freshCheck() {
 async function boot() {
   if (window.__TMSC_HEALING || await freshCheck()) return;
   if (!CFG.API) { $('boot').innerHTML = '<div class="denied"><h2>Not set up</h2><p>The app address of the server is missing (config.js). The admin has to run push.bat.</p></div>'; return; }
+  let INV = ''; try { INV = sessionStorage.getItem('tmsc.invite') || ''; } catch (e) { }
+  if (INV) { inviteScreen(INV); return; }   // [E] 23-Oct: invite link / QR
   if (!TOKEN && !KEY) { joinScreen(); return; }
   try {
     S.B = await call('bootstrap', {}, { cache: true });
@@ -178,7 +224,7 @@ async function loadAll() {
   } catch (e) { if (!e.access) fail(e); }
   $('btnReload').disabled = false;
 }
-$('btnReload').onclick = () => loadAll();
+$('btnReload').onclick = () => { LAG = { d: null, at: 0, p: null }; loadAll(); };   // [E] 23-Oct: Refresh also asks for the lagging units again
 if (window.UI) { $('btnReload').innerHTML = UI.svg('refresh') + `<span class="tl">${UI.t('Refresh')}</span>`; $('btnReload').setAttribute('aria-label', 'Refresh'); $('btnHelp').innerHTML = UI.svg('help') + `<span class="tl">${UI.t('Help')}</span>`; $('btnHelp').setAttribute('aria-label', 'Help'); }
 $('btnHelp').onclick = () => modal((window.UI ? UI.about() + '<hr style="border:0;border-top:1px solid var(--line);margin:16px 0">' : '') + helpHtml());
 window.addEventListener('online', () => { setNet(true); if (window.TMSC_FIELD) window.TMSC_FIELD.flush(); });
@@ -192,6 +238,9 @@ function banner() {
   if (r === 'SSE' && p.review) out.push(`<div class="ban ${p.reviewOver ? 'crit' : 'warn'}"><b>${p.review}</b> JE work record(s) waiting for your check${p.reviewOver ? ` – <b>${p.reviewOver}</b> beyond time` : ''}. <a href="#" data-go="review">Check now</a></div>`);
   if (r === 'AEN' && p.review) out.push(`<div class="ban ${p.reviewOver ? 'crit' : 'warn'}"><b>${p.review}</b> work record(s) waiting for your approval${p.reviewOver ? ` – <b>${p.reviewOver}</b> beyond time` : ''}. <a href="#" data-go="review">Approve now</a></div>`);
   if (['SRDEN', 'SRDENC', 'ADMIN'].includes(r) && (p.sse || p.aen)) out.push(`<div class="ban ${p.sseOver || p.aenOver ? 'crit' : 'warn'}">Waiting for review: <b>${p.sse || 0}</b> with SSEs${p.sseOver ? ` (${p.sseOver} late)` : ''} · <b>${p.aen || 0}</b> with AENs${p.aenOver ? ` (${p.aenOver} late)` : ''}. <a href="#" data-go="review">See who</a></div>`);
+  // [E] 23-Oct: sign-in requests made in this person's name on another phone; approvals waiting for this approver
+  const SI = S.B.signins || {}; (SI.mine || []).filter(x => x.status !== 'approved').forEach(x => out.push(`<div class="ban crit">Someone asked to sign in <b>as you</b> on a new phone (${esc(x.ua || 'unknown phone')}) on ${esc(String(x.at).slice(8, 10) + '-' + String(x.at).slice(5, 7) + ' ' + String(x.at).slice(11, 16))} – ${esc(x.status === 'open' ? 'waiting for approval' : x.status + (x.by ? ' by ' + x.by : ''))}. If this was not you, tell your AEN or the division office at once.</div>`));
+  if (SI.waiting && S.view !== 'access') out.push(`<div class="ban warn"><b>${SI.waiting}</b> sign-in request(s) wait for your approval. <a href="#" data-go="access">Open</a></div>`);
   const R = rems(); if (R.length) { const by = {}; R.forEach(x => { by[x.Kind] = by[x.Kind] || { n: 0, od: 0 }; by[x.Kind].n++; if (x.Overdue === 'Yes') by[x.Kind].od++; });
     const k1 = by['K1-INSP'], parts = [];
     if (k1) parts.push(`<b>${k1.n}</b> scheduled inspection(s) due${k1.od ? ` – <b>${k1.od} overdue</b>` : ''}`);
@@ -205,8 +254,8 @@ function banner() {
 
 function nav() {
   const N = NAVS[role()] || NAVS.VIEWER; const J = S.jobs.filter(inUnit); const p = S.B.pending || {};
-  const cnt = { insp: rems().length || '', work: J.filter(isOpen).length, review: p.review || ((p.sse || 0) + (p.aen || 0)) || '', urgent: J.filter(j => j.Overdue || (isOpen(j) && +j.Priority === 1)).length, jobs: J.filter(isOpen).length, chronic: J.filter(j => j.Type === 'CHRONIC' && isOpen(j)).length, plan: J.filter(j => /TRC-(TAMP|RISK|THROUGH|DS)/.test(j.Type) && isOpen(j)).length, phones: p.devices || '' };
-  $('nav').innerHTML = N.map(x => x[0][0] === '#' ? `<div class="navgrp">${window.UI ? UI.t(x[0].slice(1)) : x[0].slice(1)}</div>` : `<button data-k="${x[0]}" class="${x[0] === S.view ? 'on' : ''}">${window.UI ? UI.navIcon(x[0]) : ''}${(b => `<span class="nl"><span class="p">${b.p}</span>${b.s ? `<span class="s">${b.s}</span>` : ''}</span>`)(window.UI ? UI.bi(x[1]) : { p: x[1], s: '' })}<span class="cnt${(x[0] === 'urgent' || x[0] === 'review' || x[0] === 'phones') && cnt[x[0]] ? ' crit' : ''}">${cnt[x[0]] ?? ''}</span></button>`).join('');
+  const cnt = { insp: rems().length || '', work: J.filter(isOpen).length, review: p.review || ((p.sse || 0) + (p.aen || 0)) || '', urgent: J.filter(j => j.Overdue || (isOpen(j) && +j.Priority === 1)).length, jobs: J.filter(isOpen).length, chronic: J.filter(j => j.Type === 'CHRONIC' && isOpen(j)).length, plan: J.filter(j => /TRC-(TAMP|RISK|THROUGH|DS)/.test(j.Type) && isOpen(j)).length, phones: p.devices || '', access: (S.B.signins || {}).waiting || '' /* [E] 23-Oct */ };
+  $('nav').innerHTML = N.map(x => x[0][0] === '#' ? `<div class="navgrp">${window.UI ? UI.t(x[0].slice(1)) : x[0].slice(1)}</div>` : `<button data-k="${x[0]}" class="${x[0] === S.view ? 'on' : ''}">${window.UI ? UI.navIcon(x[0]) : ''}${(b => `<span class="nl"><span class="p">${b.p}</span>${b.s ? `<span class="s">${b.s}</span>` : ''}</span>`)(window.UI ? UI.bi(x[1]) : { p: x[1], s: '' })}<span class="cnt${(x[0] === 'urgent' || x[0] === 'review' || x[0] === 'phones' || x[0] === 'access') && cnt[x[0]] ? ' crit' : ''}">${cnt[x[0]] ?? ''}</span></button>`).join('');
   $('nav').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.k; S.f = {}; S.sel = new Set(); render(); window.scrollTo(0, 0); };
 }
 function render() {
@@ -344,66 +393,174 @@ function wireAdmin(el, rows) {
   });
 }
 
-// [E] 22-Oct: LAGGING UNITS – which unit loses marks, at which place, why, whom to chase; chase message per unit + WhatsApp draft for the
-// group (server 14_Lagging.gs, sums app/src/lagging.js). Also on "My position" of an SSE (TMSC.lagUnitBox).
-const LAG_CAUSE = { notdone: ['Not done yet', 'warn', 'SSE'], insp: ['Not inspected / not yet in TMS', 'warn', 'SSE'], notentered: ['Done in the app, not entered in TMS', 'crit', 'SSE – enter in TMS'], returned: ['Returned by the AEN – redo', 'crit', 'SSE'], sse: ['JE work waiting for the SSE\'s check', 'acc', 'SSE'], aen: ['Waiting for AEN approval', 'acc', 'AEN'], tmswait: ['Done recently – TMS update awaited', 'ok', '—'], lost: ['Lost this month – fix before the next run', 'muted', 'SSE'] };
-const LAG_K = { K1: 'Scheduled inspections', K2: 'Foot plate / RV', K3: 'Push trolley / on foot', K10: 'Defects pending > 10 days', K11: 'IMR removal', K13: 'Joggled fish plates', K14: 'DFWR removal', K15: 'Oiling & greasing', K16: 'Field visit days', K8: 'Repeated UML peaks (TRC)', K9: 'Repeated CBML blocks (TRC)' };
+// [E] 22-Oct: LAGGING UNITS – which unit can still lose marks, where, why, whom to chase (server 14_Lagging.gs, sums and words in
+// app/src/lagging.js). [E] 23-Oct: plain words – gist on top, unit cards / by kind of work / table, no KPI codes, marks rounded,
+// unit codes as everyone writes them (BWN/E, KWAE-ML), TMS fetch time, deadlines with days left, since yesterday, quick wins.
+// Also on "My position" of an SSE (TMSC.lagUnitBox).
+const LAG_WORK = { K1: 'Scheduled inspections', K2: 'Foot plate / rear vehicle', K3: 'Push trolley / on foot', K10: 'Defects pending compliance', K11: 'IMR removal', K13: 'Joggled fish plates', K14: 'DFWR removal', K15: 'Oiling & greasing of FP joints', K16: 'Field visit days' };
+const LAG_LOST = { K5: 'rail fractures', K6: 'weld fractures', K7: 'repeated OMS peaks', K8: 'repeated UML peaks (TRC)', K9: 'repeated CBML blocks (TRC)', K12: 'defective new welds', K10: "this month's defect counts" };
+const LAG_CAUSE = { notdone: ['Not done', 'warn', 'SSE'], insp: ['Not done', 'warn', 'SSE'], notentered: ['Done – not entered in TMS', 'crit', 'SSE – enter in TMS'], returned: ['Returned by AEN – redo', 'crit', 'SSE'], sse: ['Waiting for SSE check', 'acc', 'SSE'], aen: ['Waiting for AEN approval', 'acc', 'AEN'], tmswait: ['Done recently – TMS update awaited', 'ok', '—'], lost: ['Lost this month', 'muted', 'SSE'] };
+const MONS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const ddm = d => d ? `${+String(d).slice(8, 10)} ${MONS[+String(d).slice(5, 7)]}` : '';
+const mks = v => { v = +v || 0; if (v < 0.5) return 'under 1 mark'; const r = Math.round(v); return (Math.abs(v - r) > 0.05 ? 'about ' : '') + r + (r === 1 ? ' mark' : ' marks'); };
+const nIN = x => Number(x || 0).toLocaleString('en-IN');
+const tsl = t => t ? `${String(t).slice(8, 10)}-${String(t).slice(5, 7)} ${String(t).slice(11, 16)}` : '';
+const wasY = (now, prev, unit = '') => prev == null || prev === now ? '' : ` <span class="muted">(${prev}${unit} yesterday)</span>`;
 async function copyText(t) { try { await navigator.clipboard.writeText(t); toast('Copied – paste it in WhatsApp'); return; } catch (e) { } const a = document.createElement('textarea'); a.value = t; a.style.cssText = 'position:fixed;top:-1000px'; document.body.appendChild(a); a.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { } a.remove(); toast(ok ? 'Copied – paste it in WhatsApp' : 'Select the text and copy it', !ok); }
 function msgModal(title, text) {
-  modal(`<h3>${esc(title)}</h3><p class="small muted">Check it, then copy and paste it in the WhatsApp group (or open WhatsApp with it). Nothing is sent by the app.</p><textarea id="lagTxt" readonly style="width:100%;min-height:320px;font:13px/1.45 ui-monospace,Consolas,monospace;box-sizing:border-box">${esc(text)}</textarea><p style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary sm" id="lagCopy">Copy message</button><a class="btn secondary sm" target="_blank" rel="noopener" href="https://api.whatsapp.com/send?text=${encodeURIComponent(text)}">Open in WhatsApp</a></p>`, null, 'Close');
+  modal(`<h3>${esc(title)}</h3><p class="small muted">Check it, then copy and paste it in WhatsApp (or open WhatsApp with it). Nothing is sent by the app.</p><textarea id="lagTxt" readonly style="width:100%;min-height:340px;font:13px/1.45 ui-monospace,Consolas,monospace;box-sizing:border-box">${esc(text)}</textarea><p style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary sm" id="lagCopy">Copy message</button><a class="btn secondary sm" target="_blank" rel="noopener" href="https://api.whatsapp.com/send?text=${encodeURIComponent(text)}">Open in WhatsApp</a></p>`, null, 'Close');
   $('lagCopy').onclick = () => copyText(text);
 }
-const lagChip = (x, it) => { const n = it.filter(i => i.k === x.k && i.c !== 'lost').length; return `<span class="tag ${x.stake >= 3 ? 't1' : x.stake >= 1 ? 't2' : 't3'}" title="${esc(x.note || '')}">${x.k} ${x.next ? '≈' : ''}−${x.stake}${n ? ` · ${n}` : ''}${x.stale ? ' ⚠' : ''}</span>`; };
-function lagDetail(u, L, f) {
-  const items = u.items.filter(i => !f || (f === 'chase' ? i.c !== 'lost' && i.c !== 'tmswait' : f === 'review' ? i.c === 'sse' || i.c === 'aen' : i.c === f));
-  const ks = u.kpis.filter(x => (x.stake > 0 || items.some(i => i.k === x.k)) && items.some(i => i.k === x.k) || x.stake > 0);
-  const lost = u.kpis.filter(x => x.fixed && !x.next && x.now != null && x.now < x.max);
-  const blocks = ks.map(x => { const it = items.filter(i => i.k === x.k);
-    return `<div class="panel body" style="margin-top:10px"><h3 class="sec">${x.k} – ${esc(LAG_K[x.k] || x.name || '')} <span class="${x.stake >= 1 ? 'od' : 'muted'}">${x.next ? '≈' : ''}${x.stake} mark(s) at stake</span>${x.stale ? ` <span class="tag t2">TMS data of ${dmy(x.stale)} – refresh first</span>` : ''}</h3>
-      <div class="inner small muted" style="padding-bottom:4px">${x.now != null ? `Forecast ${x.now} / ${x.max}` : ''}${x.worst != null ? ` · if nothing more is done ${x.worst}` : ''}${x.best != null ? ` · at best ${x.best}` : ''}${x.note ? ' · ' + esc(x.note) : ''}</div>
-      ${it.length ? `<div class="scroll"><table class="t compact"><thead><tr><th>What</th><th>Where</th><th>When</th><th>Why still pending</th><th>Chase</th></tr></thead><tbody>${it.slice(0, 300).map(i => { const c = LAG_CAUSE[i.c] || [i.c, 'muted', '']; return `<tr${i.id ? ` data-job="${esc(i.id)}" style="cursor:pointer"` : ''}><td class="wrap">${esc(i.what)}</td><td class="wrap"><span class="loc" style="font-size:13px">${esc(i.where || '')}</span></td><td class="nw small">${esc(i.when || (i.target ? 'target ' + dmy(i.target) : ''))}</td><td><span class="tag ${c[1] === 'crit' ? 't1' : c[1] === 'warn' ? 't2' : 't3'}">${esc(c[0])}</span>${i.since ? `<div class="small muted">${i.c === 'notentered' ? 'done ' + dmy(i.since) + ' (' + i.days + ' days)' : dmy(i.since)}</div>` : ''}</td><td class="small nw">${esc(c[2] === 'AEN' ? (u.aen || 'AEN') : c[2].replace(/^SSE/, 'SSE/' + u.unit))}</td></tr>`; }).join('')}</tbody></table></div>${it.length > 300 ? `<div class="pager">${it.length} items – first 300 shown</div>` : ''}` : '<div class="inner small muted">No single items behind this – see the note.</div>'}</div>`; }).join('');
-  return `<div class="panel body"><div class="inner"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><h2 style="margin:0">${esc(u.unit)}</h2><span class="muted">${esc(u.aen || '')}</span><span class="right" style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" data-msg="${esc(u.unit)}">Chase message for ${esc(u.unit)}</button></span></div>
-    <div class="kpis" style="margin-top:8px"><div class="kpi ${u.stake >= 5 ? 'crit' : u.stake >= 1 ? 'warn' : 'ok'}"><div class="l">Can still be saved by ${dmy(L.next1)}</div><div class="v">${u.stake}<small> marks</small></div><div class="s">forecast ${u.now ?? '—'} · if nothing more is done ${u.worst} · at best ${u.best}</div></div>
-    <div class="kpi ${u.causes.notentered ? 'crit' : 'ok'}"><div class="l">Done in the app, not in TMS</div><div class="v">${u.causes.notentered || 0}</div><div class="s">recorded here over ${L.tmsDays} days ago, TMS still lists it</div></div>
-    <div class="kpi ${(u.causes.notdone || 0) + (u.causes.insp || 0) ? 'warn' : 'ok'}"><div class="l">Not done yet</div><div class="v">${(u.causes.notdone || 0) + (u.causes.insp || 0) + (u.causes.returned || 0)}</div><div class="s">field work / inspections still to do</div></div>
-    <div class="kpi acc"><div class="l">Waiting for check / approval</div><div class="v">${(u.causes.sse || 0) + (u.causes.aen || 0)}</div><div class="s">${u.causes.sse || 0} with the SSE · ${u.causes.aen || 0} with the AEN</div></div></div>
-    ${u.trend ? `<div class="small muted">Since ${dmy(u.trend.date)}: ${u.trend.stake > 0 ? '<span class="od">+' + u.trend.stake + ' marks at stake</span>' : u.trend.stake < 0 ? u.trend.stake + ' marks at stake' : 'marks at stake unchanged'}, ${u.trend.items > 0 ? '+' : ''}${u.trend.items} pending items</div>` : ''}
-    ${u.nodata.length ? `<div class="small muted">Not calculated here (no data, or TMS's own mark): ${esc(u.nodata.join(', '))}</div>` : ''}</div></div>${blocks || '<div class="empty">Nothing pending that changes this month\'s marks.</div>'}
-    ${lost.length ? `<details class="panel body" style="margin-top:10px"><summary class="small" style="padding:14px 18px;cursor:pointer">Already lost this month – cannot be won back before ${dmy(L.next1)} (${lost.map(x => x.k).join(', ')})</summary><div class="inner" style="padding-top:0"><ul class="small">${lost.map(x => `<li><b>${x.k}</b> ${esc(LAG_K[x.k] || x.name || '')}: ${x.now} / ${x.max}${x.note ? ' – ' + esc(x.note) : ''}</li>`).join('')}</ul>${u.items.filter(i => i.c === 'lost').length ? `<div class="scroll"><table class="t compact"><tbody>${u.items.filter(i => i.c === 'lost').map(i => `<tr><td>${i.k}</td><td>${esc(i.what)}</td><td class="wrap">${esc(i.where)}</td></tr>`).join('')}</tbody></table></div>` : ''}</div></details>` : ''}`;
+const dueT = (u, k) => { const d = (u.due || {})[k]; if (!d) return ''; return d.left <= 3 ? `<b class="od">last ${d.left} day${d.left === 1 ? '' : 's'} – by ${ddm(d.by)}</b>` : `by ${ddm(d.by)} · ${d.left} days left`; };
+/** one plain line per work for a unit card */
+function workLine(u, x) {
+  const f = (u.facts || {})[x.k], p = u.prev && u.prev.f ? u.prev.f[x.k] : null;
+  const t = { K1: `${f} scheduled inspection${f === 1 ? '' : 's'} to do and enter in TMS${wasY(f, p)}`, K2: `Foot plate / rear vehicle: ${f != null ? f + ' km not covered' : 'km not covered'}${wasY(f, p, ' km')}`, K3: `Push trolley / on foot: ${f != null ? f + ' km not covered' : 'km not covered'}${wasY(f, p, ' km')}`,
+    K10: `${f} defect${f === 1 ? '' : 's'} will cross 10 days on ${ddm(x.date)} – comply and enter in TMS${wasY(f, p)}`, K15: `Oiling & greasing: ${nIN(f)} FP joints overdue${wasY(f, p)}`, K16: `Field visit days: ${f} so far – ${Math.max(0, 16 - f)} more needed for full marks${wasY(f, p)}`,
+    K14: `${f} DFWR older than 90 days to remove${wasY(f, p)}`, K13: `${f} AT weld${f === 1 ? '' : 's'} waiting for joggled fish plates${wasY(f, p)}`, K11: `IMR to remove within 3 days` }[x.k] || esc(x.name || x.k);
+  return `<li>${t} – <b>${mks(x.stake)}</b> <span class="small muted">· ${dueT(u, x.k)}</span></li>`;
+}
+const lagEdge = s => s >= 10 ? 'crit' : s >= 3 ? 'warn' : 'ok';
+function lagCard(u, L) {
+  const ks = u.kpis.filter(x => x.stake > 0 && LAG_WORK[x.k]); const lost = u.kpis.filter(x => x.fixed && x.now != null && x.now < x.max).map(x => LAG_LOST[x.k]).filter(Boolean);
+  return `<div class="panel body" data-card="${esc(u.unit)}" style="border-left:5px solid var(--${lagEdge(u.stake)});margin-bottom:10px"><div class="inner">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline"><h3 style="margin:0;font-size:18px">${esc(u.code || u.unit)}</h3><span class="muted small">${esc(u.aen || '')}</span><span style="margin-left:auto;font-weight:600" class="${u.stake >= 3 ? 'od' : ''}">${u.stake >= 0.5 ? 'can still save ' + mks(u.stake) : 'nothing pending'}${u.prev ? wasY(Math.round(u.stake), Math.round(u.prev.s)) : ''}</span></div>
+    <div class="small muted" style="margin:2px 0 8px">On course for ${Math.round(u.now ?? 0)}/82 · if nothing more is done ${Math.round(u.worst)} · if everything is done ${Math.round(u.best)}</div>
+    ${u.wins && u.wins.length ? `<div class="small" style="margin-bottom:6px"><b>Quick wins:</b> ${u.wins.map(w => esc(w.text)).join(' · ')}</div>` : ''}
+    ${ks.length ? `<ul style="margin:0 0 6px 18px;padding:0">${ks.map(x => workLine(u, x)).join('')}</ul>` : '<div class="small">Nothing pending that changes this month\'s marks.</div>'}
+    ${u.causes && u.causes.notentered ? `<div class="small od">${u.causes.notentered} done in the app but not entered in TMS</div>` : ''}
+    ${lost.length ? `<div class="small muted">Already lost this month: ${esc(lost.join(', '))}</div>` : ''}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn secondary sm" data-list="${esc(u.unit)}">Show the list</button><button class="btn primary sm" data-msg="${esc(u.unit)}">Chase message</button></div>
+    <div data-det="${esc(u.unit)}"></div></div></div>`;
+}
+function lagDetail(u, L) {
+  const ks = u.kpis.filter(x => u.items.some(i => i.k === x.k && i.c !== 'lost'));
+  const blocks = ks.map(x => { const it = u.items.filter(i => i.k === x.k && i.c !== 'lost');
+    return `<div style="margin-top:12px"><div style="font-weight:600">${esc(LAG_WORK[x.k] || x.name || '')} – ${mks(x.stake)} <span class="small muted">· ${dueT(u, x.k)}${x.stale ? ` · <span class="od">TMS data of ${dmy(x.stale)} – refresh first</span>` : ''}</span></div>
+      <div class="scroll"><table class="t compact"><thead><tr><th>What</th><th>Where</th><th>When</th><th>Why still pending</th><th>Who acts</th></tr></thead><tbody>${it.slice(0, 300).map(i => { const c = LAG_CAUSE[i.c] || [i.c, 'muted', '']; return `<tr${i.id ? ` data-job="${esc(i.id)}" style="cursor:pointer"` : ''}><td class="wrap">${esc(i.what)}</td><td class="wrap"><span class="loc" style="font-size:13px">${esc(i.where || '')}</span></td><td class="nw small">${esc(i.when || (i.target ? 'target ' + dmy(i.target) : ''))}</td><td><span class="tag ${c[1] === 'crit' ? 't1' : c[1] === 'warn' ? 't2' : 't3'}">${esc(c[0])}</span>${i.since ? `<div class="small muted">${i.c === 'notentered' ? 'done ' + dmy(i.since) + ' (' + i.days + ' days)' : dmy(i.since)}</div>` : ''}</td><td class="small nw">${esc(c[2] === 'AEN' ? (u.aen || 'AEN') : c[2].replace(/^SSE/, 'SSE/' + (u.code || u.unit)))}</td></tr>`; }).join('')}</tbody></table></div>${it.length > 300 ? `<div class="pager">${it.length} items – first 300 shown</div>` : ''}</div>`; }).join('');
+  const lostIt = u.items.filter(i => i.c === 'lost');
+  return (blocks || '<div class="small muted" style="margin-top:8px">No single items behind this.</div>') + (lostIt.length ? `<details style="margin-top:10px"><summary class="small">Lost this month – repeated TRC locations (${lostIt.length})</summary><ul class="small">${lostIt.map(i => `<li>${esc(i.what)} – ${esc(i.where)}</li>`).join('')}</ul></details>` : '');
 }
 function wireLag(el, L) {
-  el.querySelectorAll('[data-msg]').forEach(b => b.onclick = () => { const u = L.units.find(x => x.unit === b.dataset.msg); if (u) msgModal('Chase message – ' + u.unit, u.text); });
+  el.querySelectorAll('[data-msg]').forEach(b => b.onclick = () => { const u = L.units.find(x => x.unit === b.dataset.msg); if (u) msgModal('Chase message – ' + (u.code || u.unit), u.text); });
+  el.querySelectorAll('[data-kmsg]').forEach(b => b.onclick = () => { const t = (L.kinds || {})[b.dataset.kmsg]; if (t) msgModal('WhatsApp message – ' + (LAG_WORK[b.dataset.kmsg] || ''), t); });
+  el.querySelectorAll('[data-list]').forEach(b => b.onclick = () => { const u = L.units.find(x => x.unit === b.dataset.list); const box = el.querySelector(`[data-det="${CSS.escape(b.dataset.list)}"]`); if (!u || !box) return; if (box.innerHTML) { box.innerHTML = ''; b.textContent = 'Show the list'; return; } box.innerHTML = lagDetail(u, L); b.textContent = 'Hide the list'; });
   // rows with data-job open the job through the page-wide click handler
 }
-async function lagLoad(el) { el.innerHTML = '<div class="empty">Loading the lagging units…</div>'; try { return await call('lagging', {}, { cache: true }); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.error || e)}</div>`; return null; } }
+// the server needs ~35 s for this list – one call shared by every render, kept 10 min; Refresh asks again
+let LAG = { d: null, at: 0, p: null };
+function lagFetch() { if (LAG.d && Date.now() - LAG.at < 600000) return Promise.resolve(LAG.d); if (!LAG.p) LAG.p = call('lagging', {}, { cache: true, timeout: 240000 }).then(d => { LAG = { d, at: Date.now(), p: null }; return d; }, e => { LAG.p = null; throw e; }); return LAG.p; }
+async function lagLoad(el) {
+  if (LAG.d && Date.now() - LAG.at < 600000) return LAG.d;
+  el.innerHTML = '<div class="empty">Working out the lagging units – the server needs about half a minute…</div>';
+  try { return await lagFetch(); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.error || e)}</div>`; return null; }
+}
+function fetchedHtml(L) {
+  const f = L.fetched || {}; const v = Object.values(f).sort(); if (!v.length) return '';
+  const newest = v[v.length - 1]; const old = Object.keys(f).filter(k => LAG_WORK[k] && (f[k].slice(0, 10) !== newest.slice(0, 10) || Date.parse(newest) - Date.parse(f[k]) > 3 * 36e5));
+  return `<div class="small muted" style="margin:-4px 0 10px">TMS data fetched <b>${tsl(newest)}</b>${old.length ? ' · older: ' + old.map(k => `${esc(LAG_WORK[k])} ${tsl(f[k])}`).join(' · ') : ''}</div>`;
+}
 VIEWS.lag = async el => {
   const L = await lagLoad(el); if (!L) return;
-  const f = S.f.lag || ''; const show = S.unit === '__all' ? L.units : L.units.filter(u => u.unit === S.unit);
-  const lagging = L.units.filter(u => u.stake > 0); const tot = Math.round(L.units.reduce((a, u) => a + u.stake, 0) * 10) / 10;
-  const sum = k => L.units.reduce((a, u) => a + (u.causes[k] || 0), 0);
-  const staleK = Object.keys(L.stale || {});
-  const sel = S.lagSel && show.find(u => u.unit === S.lagSel) ? S.lagSel : (show.length === 1 ? show[0].unit : null);
-  el.innerHTML = pageHead('Lagging units', `Marks that can still be saved before ${dmy(L.next1)} – biggest first. For every unit: the exact items, why each is still pending, and whom to chase.`) +
-    (staleK.length ? `<div class="ban warn">TMS data not refreshed recently: ${staleK.map(k => `<b>${k}</b> ${esc(LAG_K[k] || '')} (data of ${dmy(L.stale[k])})`).join(' · ')}. Fetch these reports in the TMS Collector before chasing – the lists may be behind TMS.</div>` : '') +
-    `<div class="kpis"><div class="kpi ${lagging.length ? 'warn' : 'ok'}"><div class="l">Units with marks at stake</div><div class="v">${lagging.length}<small> / ${L.units.length}</small></div><div class="s">can still be saved before ${dmy(L.next1)}</div></div>
-     <div class="kpi crit"><div class="l">Marks at stake (all units)</div><div class="v">${tot}</div><div class="s">K10 counted as a third (one of three counts)</div></div>
-     <div class="kpi ${sum('notentered') ? 'crit' : 'ok'}"><div class="l">Done in the app, not in TMS</div><div class="v">${sum('notentered')}</div><div class="s">over ${L.tmsDays} days – chase the TMS entry</div></div>
-     <div class="kpi acc"><div class="l">Waiting for check / approval</div><div class="v">${sum('sse') + sum('aen')}</div><div class="s">${sum('sse')} with SSEs · ${sum('aen')} with AENs</div></div></div>` +
-    `<div class="panel body"><div class="inner" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${L.group ? '<button class="btn primary" id="lagGroup">WhatsApp message for the group</button>' : ''}<select id="lagF"><option value="">All pending items</option><option value="chase" ${f === 'chase' ? 'selected' : ''}>Only what needs chasing</option><option value="notentered" ${f === 'notentered' ? 'selected' : ''}>Done in the app, not entered in TMS</option><option value="notdone" ${f === 'notdone' ? 'selected' : ''}>Not done yet</option><option value="review" ${f === 'review' ? 'selected' : ''}>Waiting for SSE check / AEN approval</option></select><span class="small muted">${L.prev ? 'Change shown against ' + dmy(L.prev) : 'Change against last week shows from next week'}</span></div>
-     <div class="scroll"><table class="t"><thead><tr><th>#</th><th>Unit</th><th>Marks at stake</th><th>Forecast → if nothing done → best</th><th>Where the marks are</th><th>Not in TMS</th><th>Not done</th><th>With SSE / AEN</th><th>vs last week</th></tr></thead><tbody>${show.map(u => `<tr data-lu="${esc(u.unit)}" class="${u.unit === sel ? 'ok' : ''}" style="cursor:pointer"><td class="n">${u.rank}</td><td><b>${esc(u.unit)}</b><div class="small muted">${esc(u.aen || '')}</div></td><td class="n">${u.stake ? `<b class="od">${u.stake}</b>` : '0'}</td><td class="nw small">${u.now ?? '—'} → ${u.worst} → ${u.best}</td><td>${u.kpis.filter(x => x.stake > 0).map(x => lagChip(x, u.items)).join(' ') || '<span class="small muted">—</span>'}</td><td class="n">${u.causes.notentered ? `<b class="od">${u.causes.notentered}</b>` : ''}</td><td class="n">${((u.causes.notdone || 0) + (u.causes.insp || 0) + (u.causes.returned || 0)) || ''}</td><td class="n">${((u.causes.sse || 0) + (u.causes.aen || 0)) || ''}</td><td class="n small">${u.trend ? (u.trend.stake > 0 ? `<span class="od">+${u.trend.stake}</span>` : u.trend.stake) : ''}</td></tr>`).join('')}</tbody></table></div>
-     <div class="legend"><span>Tap a unit for its exact list</span><span>K1 −5 · 42 = K1, 5 marks at stake, 42 items</span><span>≈ K10: next count only (one of three)</span><span>⚠ TMS data old</span></div></div>
-     <div id="lagDet">${sel ? lagDetail(show.find(u => u.unit === sel), L, f) : ''}</div>`;
+  const tab = S.lagTab || 'unit'; const show = S.unit === '__all' ? L.units : L.units.filter(u => u.unit === S.unit);
+  const G = L.gist || { lines: [], worst: [] }; const staleK = Object.keys(L.stale || {}).filter(k => LAG_WORK[k]);
+  const head = pageHead('Lagging units', `What each unit must still finish and enter in TMS before ${ddm(L.next1)} – worst first.`) + fetchedHtml(L) +
+    (staleK.length ? `<div class="ban warn">TMS data not refreshed recently: ${staleK.map(k => `<b>${esc(LAG_WORK[k])}</b> (data of ${dmy(L.stale[k])})`).join(' · ')}. Fetch these reports in the TMS Collector before chasing.</div>` : '') +
+    `<div class="panel body" style="margin-bottom:12px"><div class="inner"><div style="font-size:17px;font-weight:600;margin-bottom:6px">${esc(G.head || '')}</div>
+      <ul style="margin:0 0 8px 18px;padding:0">${G.lines.map(x => `<li><b>${esc(x.text)}</b> – ${x.units} unit${x.units === 1 ? '' : 's'} – ${esc(x.marks)}</li>`).join('')}</ul>
+      <div class="small">${G.worst.length ? `Worst placed: <b>${esc(G.worst.join(', '))}</b> · ` : ''}Done in the app but not yet entered in TMS: <b>${G.notEntered || 'none'}</b>${L.prevDay ? ` · compared with ${dmy(L.prevDay)}` : ' · "since yesterday" shows from tomorrow'}</div>
+      ${L.group ? '<div style="margin-top:10px"><button class="btn primary" id="lagGroup">WhatsApp message for the group</button></div>' : ''}</div></div>
+    <div class="seg" style="margin-bottom:10px">${[['unit', 'By unit'], ['work', 'By kind of work'], ['table', 'Table']].map(([k, t]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${t}</button>`).join('')}</div>`;
+  let body = '';
+  if (tab === 'unit') body = show.map(u => lagCard(u, L)).join('') || '<div class="empty">No units.</div>';
+  else if (tab === 'work') body = (L.summary || []).map(x => { const d = (x.units[0] && (L.units.find(u => u.unit === x.units[0].unit) || {}).due || {})[x.k];
+    return `<div class="panel body" style="margin-bottom:10px"><div class="inner"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline"><h3 style="margin:0;font-size:17px">${esc(x.title)}</h3><span class="small muted">${x.units.length} unit${x.units.length === 1 ? '' : 's'} · ${mks(x.stake)}${d ? ' · ' + (d.left <= 3 ? `<b class="od">last ${d.left} days</b>` : `by ${ddm(d.by)}, ${d.left} days left`) : ''}</span>${(L.kinds || {})[x.k] ? `<button class="btn primary sm" style="margin-left:auto" data-kmsg="${x.k}">WhatsApp message</button>` : ''}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${x.units.map(y => `<button class="btn secondary sm" data-go-unit="${esc(y.unit)}" title="${mks(y.stake)}">${esc(y.code)} · ${x.k === 'K2' || x.k === 'K3' ? (y.f != null ? y.f + ' km' : '') : x.k === 'K16' ? (y.f ?? 0) + ' days' : x.k === 'K15' ? nIN(y.f) + ' joints' : y.n}${y.p != null && y.p !== y.f ? ` <span class="muted">(${y.p})</span>` : ''}</button>`).join('')}</div>
+      ${x.complete.length ? `<div class="small muted" style="margin-top:8px">Complete: ${esc(x.complete.join(', '))}</div>` : ''}</div></div>`; }).join('') || '<div class="empty">Nothing pending in any unit.</div>';
+  else body = `<div class="panel body"><div class="scroll"><table class="t"><thead><tr><th>#</th><th>Unit</th><th>Can still save</th><th>On course for</th><th>If nothing done</th><th>If everything done</th><th>Biggest item</th><th>Done, not in TMS</th><th>Not done</th><th>With SSE / AEN</th><th>Since last week</th></tr></thead><tbody>${show.map(u => { const top = u.kpis.find(x => x.stake > 0 && LAG_WORK[x.k]);
+      return `<tr data-go-unit="${esc(u.unit)}" style="cursor:pointer"><td class="n">${u.rank}</td><td><b>${esc(u.code || u.unit)}</b><div class="small muted">${esc(u.aen || '')}</div></td><td class="n">${u.stake >= 0.5 ? `<b class="${u.stake >= 3 ? 'od' : ''}">${Math.round(u.stake)}</b>` : '0'}</td><td class="n">${Math.round(u.now ?? 0)}</td><td class="n">${Math.round(u.worst)}</td><td class="n">${Math.round(u.best)}</td><td class="small">${top ? esc(LAG_WORK[top.k]) + ' (' + mks(top.stake) + ')' : '—'}</td><td class="n">${u.causes.notentered ? `<b class="od">${u.causes.notentered}</b>` : ''}</td><td class="n">${((u.causes.notdone || 0) + (u.causes.insp || 0) + (u.causes.returned || 0)) || ''}</td><td class="n">${((u.causes.sse || 0) + (u.causes.aen || 0)) || ''}</td><td class="n small">${u.trend ? (u.trend.stake > 0.4 ? `<span class="od">+${Math.round(u.trend.stake)}</span>` : u.trend.stake < -0.4 ? Math.round(u.trend.stake) : '0') : ''}</td></tr>`; }).join('')}</tbody></table></div><div class="legend"><span>Marks rounded · tap a unit for its card</span>${L.prev ? `<span>last week = ${dmy(L.prev)}</span>` : '<span>"since last week" shows after a week</span>'}</div></div>`;
+  el.innerHTML = head + `<div id="lagBody">${body}</div>`;
   if ($('lagGroup')) $('lagGroup').onclick = () => msgModal('WhatsApp message for the group', L.group);
-  $('lagF').onchange = () => { S.f.lag = $('lagF').value; VIEWS.lag(el); };
-  el.querySelectorAll('tr[data-lu]').forEach(tr => tr.onclick = () => { S.lagSel = tr.dataset.lu; el.querySelectorAll('tr[data-lu]').forEach(x => x.classList.toggle('ok', x === tr)); $('lagDet').innerHTML = lagDetail(L.units.find(u => u.unit === S.lagSel), L, S.f.lag || ''); wireLag($('lagDet'), L); $('lagDet').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.lagTab = b.dataset.tab; VIEWS.lag(el); });
+  el.querySelectorAll('[data-go-unit]').forEach(b => b.onclick = () => { S.lagTab = 'unit'; VIEWS.lag(el).then(() => { const c = el.querySelector(`[data-card="${CSS.escape(b.dataset.goUnit)}"]`); if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'start' }); const lb = c.querySelector('[data-list]'); if (lb) lb.click(); } }); });
   wireLag(el, L);
 };
-// an SSE's own list on "My position" (field.js)
+// an SSE's own card and list on "My position" (field.js)
 window.TMSC.lagUnitBox = async (box, unit) => {
-  let L; try { L = await call('lagging', {}, { cache: true }); } catch (e) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="small muted" style="margin:12px 0">Loading your list of what is still pending…</div>';
+  let L; try { L = await lagFetch(); } catch (e) { box.innerHTML = ''; return; }
   const u = L.units.find(x => x.unit === unit); if (!u) { box.innerHTML = ''; return; }
-  box.innerHTML = `<h3 class="sec" style="margin:14px 0 6px">${esc(window.UI ? UI.t('What is still pending before') : 'What is still pending before')} ${dmy(L.next1)} – and why</h3>` + lagDetail(u, L, '');
-  wireLag(box, L);
+  box.innerHTML = `<h3 class="sec" style="margin:14px 0 6px">${esc(window.UI ? UI.t('What is still pending before') : 'What is still pending before')} ${ddm(L.next1)} – and why</h3>` + fetchedHtml(L) + lagCard(u, L);
+  wireLag(box, L); const lb = box.querySelector('[data-list]'); if (lb) lb.click();
+};
+// [E] 23-Oct: SIGN-IN APPROVALS (AEN for the JEs / SSEs of his units, admin for everyone): approve a new phone by scanning its QR or typing
+// its 6-digit code; invite a person (one-use link / QR, 24 h); see what waits and what was decided. Nobody else can approve.
+const tIST = s => s ? String(s).replace(/^'/, '').slice(0, 16).replace('T', ' ') : '';
+const dmyT = s => { const t = tIST(s); return t ? `${t.slice(8, 10)}-${t.slice(5, 7)} ${t.slice(11, 16)}` : ''; };
+async function scanQR() {   // camera QR scan (Chrome on Android); resolves with the text or null
+  if (!('BarcodeDetector' in window) || !navigator.mediaDevices) { toast('This browser cannot scan – type the 6-digit code instead', true); return null; }
+  let stream; try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); } catch (e) { toast('Camera not allowed – type the 6-digit code instead', true); return null; }
+  return new Promise(res => {
+    modal('<h3>Scan the QR on the other phone</h3><video id="qrV" playsinline muted style="width:100%;max-height:60vh;background:#000;border-radius:12px"></video><p class="small muted">Hold the QR inside the picture.</p>', null, 'Cancel');
+    const v = $('qrV'); v.srcObject = stream; v.play(); const det = new BarcodeDetector({ formats: ['qr_code'] }); let done = false;
+    const end = t => { if (done) return; done = true; stream.getTracks().forEach(x => x.stop()); $('modal').classList.add('hidden'); res(t); };
+    $('modalCancel').onclick = () => end(null); $('modalOk').onclick = () => end(null);
+    const loop = async () => { if (done) return; try { const c = await det.detect(v); if (c && c.length) { end(c[0].rawValue); return; } } catch (e) { } setTimeout(loop, 300); };
+    loop();
+  });
+}
+window.TMSC.inviteModal = r => inviteModal(r);
+function inviteModal(r) {
+  const qr = window.TMSC_QR ? TMSC_QR.svg(r.link, 240) : '';
+  const text = `TMS Control – invite for ${r.name} (${r.role}${r.scope ? ', ' + r.scope : ''}).\nOpen this link on YOUR OWN phone to sign in (works once, until ${dmyT(r.expires)}):\n${r.link}`;
+  modal(`<h3>Invite – ${esc(r.name)}</h3><p class="small">${esc(r.role)}${r.scope ? ' · ' + esc(r.scope) : ''} · works <b>once</b>, until <b>${esc(dmyT(r.expires))}</b>, on the first phone that opens it.</p>
+    <div style="text-align:center">${qr}</div><p class="small muted">Let the person scan this with their phone camera – or send the link.</p>
+    <textarea readonly style="width:100%;min-height:70px;font:12px ui-monospace,monospace;box-sizing:border-box">${esc(r.link)}</textarea>
+    <p style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary sm" id="invCopy">Copy link</button><a class="btn secondary sm" target="_blank" rel="noopener" href="https://api.whatsapp.com/send?text=${encodeURIComponent(text)}">Send on WhatsApp</a></p>`, null, 'Close');
+  $('invCopy').onclick = async () => { try { await navigator.clipboard.writeText(r.link); toast('Link copied'); } catch (e) { toast('Select the link and copy it', true); } };
+}
+VIEWS.access = async el => {
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  let L; try { L = await call('accessList'); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.error || e)}</div>`; return; }
+  const isAdmin = role() === 'ADMIN';
+  const people = L.people || [];
+  el.innerHTML = pageHead('Sign-in approvals', isAdmin ? 'Approve new phones, invite people. You approve everyone; an AEN approves the JEs / SSEs of his own units.' : 'Approve new phones of the JEs / SSEs of your units, and invite them. Everyone else is approved by the division office.') +
+    `<div class="panel body" style="margin-bottom:12px"><div class="inner"><h3 style="margin:0 0 6px">Approve a phone</h3>
+      <p class="small muted" style="margin:0 0 8px">The person opens TMS Control on the new phone and gets a QR + a 6-digit code (valid ${L.codeMin} min). Scan the QR when you are together, or ask them to read out the code on a call.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn primary" id="aScan">Scan QR</button><span class="muted">or</span><input id="aCode" inputmode="numeric" maxlength="7" placeholder="6-digit code" style="font:600 20px ui-monospace,monospace;width:150px;letter-spacing:2px"><button class="btn secondary" id="aFind">Find</button></div>
+      <div id="aCard" style="margin-top:10px"></div></div></div>
+    <div class="panel body" style="margin-bottom:12px"><div class="inner"><h3 style="margin:0 0 6px">Waiting for approval (${L.open.length})</h3>${L.open.length ? `<div class="scroll"><table class="t compact"><thead><tr><th>Person</th><th>Asked as</th><th>Phone</th><th>Asked</th><th>Code valid till</th></tr></thead><tbody>${L.open.map(o => `<tr><td><b>${esc(o.name)}</b><div class="small muted">${esc(o.mobile || '')}</div></td><td class="small">${esc(o.kind === 'new' ? (o.desig || o.role) + ' – not in the staff list' : o.role + (o.scope ? ' · ' + o.scope : ''))}</td><td class="small">${esc(o.ua || '')}</td><td class="nw small">${esc(dmyT(o.asked))}</td><td class="nw small">${esc(dmyT(o.expires))}</td></tr>`).join('')}</tbody></table></div><p class="small muted">To approve, scan the QR or type the code shown on that phone – this list alone cannot approve.</p>` : '<div class="small muted">Nothing waiting.</div>'}</div></div>
+    <div class="panel body" style="margin-bottom:12px"><div class="inner"><h3 style="margin:0 0 6px">Invite someone</h3>
+      <p class="small muted" style="margin:0 0 8px">One-use link / QR, valid ${L.inviteH} hours, tied to the first phone that opens it. Role and unit come from here – the person cannot change them.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="iWho" style="min-width:260px"><option value="">– choose a person –</option>${people.map(p => `<option value="${esc(p.userId)}">${esc(p.scope || '—')} · ${esc(p.name)} · ${esc(p.role)}${p.phones ? ' (' + p.phones + ' phone' + (p.phones > 1 ? 's' : '') + ')' : ''}</option>`).join('')}</select><button class="btn primary" id="iMake">Make invite</button></div>
+      <details style="margin-top:10px"><summary class="small">A new person (not in the list yet)</summary><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <input id="nName" placeholder="Full name" maxlength="60"><input id="nMob" inputmode="tel" placeholder="Mobile number" maxlength="14">
+        <select id="nRole">${(L.canAdd || []).map(r => `<option value="${r}">${esc((S.B.roles || {})[r] || r)}</option>`).join('')}</select>
+        <select id="nScope"><option value="">– unit / charge –</option>${(L.units || []).map(u => `<option>${esc(u)}</option>`).join('')}${isAdmin ? (S.B.aens || []).map(a => `<option value="${esc(a)}">AEN charge: ${esc(a)}</option>`).join('') + (S.B.srdens || []).map(a => `<option value="${esc(a)}">Sr DEN charge: ${esc(a)}</option>`).join('') : ''}</select>
+        <button class="btn secondary" id="nMake">Add and invite</button></div></details></div></div>
+    <div class="panel body" style="margin-bottom:12px"><div class="inner"><h3 style="margin:0 0 6px">Invites (${L.invites.length})</h3>${L.invites.length ? `<div class="scroll"><table class="t compact"><thead><tr><th>For</th><th>Made</th><th>Valid till</th><th>Status</th><th></th></tr></thead><tbody>${L.invites.map(x => `<tr><td><b>${esc(x.name)}</b><div class="small muted">${esc(x.role)}${x.scope ? ' · ' + esc(x.scope) : ''}</div></td><td class="small nw">${esc(dmyT(x.made))}${isAdmin ? '<div class="muted">' + esc(x.by) + '</div>' : ''}</td><td class="small nw">${esc(dmyT(x.expires))}</td><td class="small">${esc(x.status === 'used' ? 'used ' + dmyT(x.used) + (x.ua ? ' – ' + x.ua : '') : x.status)}</td><td>${x.status === 'open' ? `<button class="btn ghost sm" data-wd="${esc(x.req)}">Withdraw</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small muted">No invites yet.</div>'}</div></div>
+    <details class="panel body"><summary style="padding:14px 18px;cursor:pointer">Decided in the last 7 days (${L.recent.length})</summary><div class="inner" style="padding-top:0">${L.recent.length ? `<div class="scroll"><table class="t compact"><tbody>${L.recent.map(o => `<tr><td><b>${esc(o.name)}</b><div class="small muted">${esc(o.role)}${o.scope ? ' · ' + esc(o.scope) : ''}</div></td><td class="small">${esc(o.ua || '')}</td><td class="small nw">${esc(dmyT(o.asked))}</td><td class="small"><b>${esc(o.status)}</b>${o.by ? ' by ' + esc(o.by) : ''}${o.on ? ' ' + esc(dmyT(o.on)) : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small muted">Nothing.</div>'}</div></details>`;
+  const show = async (code, req) => {
+    const box = $('aCard'); box.innerHTML = '<div class="small muted">Looking it up…</div>';
+    let f; try { f = await call('accessFind', { code, req }); } catch (e) { box.innerHTML = `<div class="ban crit">${esc(e.error || e)}</div>`; return; }
+    const canEdit = f.kind === 'new';
+    box.innerHTML = `<div class="panel" style="border-left:5px solid var(--warn);padding:12px 16px"><div style="font-size:17px"><b>${esc(f.name)}</b> · ${esc(f.roleName)}${f.scope ? ' · ' + esc(f.scope) : ''}</div>
+      <div class="small">Mobile ${esc(f.mobile || '—')} · phone: <b>${esc(f.ua || 'unknown')}</b> · asked ${esc(dmyT(f.asked))} · code ${fmtCode(f.code)}</div>
+      <div class="small muted">${f.onList ? `In the staff list · phones in use ${f.phones} of ${f.max}${f.phones >= f.max ? ' – approving signs out the phone used least recently' : ''}` : `NOT in the staff list – asked as "${esc(f.desig)}". Check who this is before approving; you can set the designation and unit.`}</div>
+      ${canEdit ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><select id="fRole">${(L.canAdd || []).map(r => `<option value="${r}" ${r === f.role ? 'selected' : ''}>${esc((S.B.roles || {})[r] || r)}</option>`).join('')}</select><select id="fScope"><option value="">– unit / charge –</option>${(L.units || []).map(u => `<option ${u === f.scope ? 'selected' : ''}>${esc(u)}</option>`).join('')}${isAdmin ? (S.B.aens || []).map(a => `<option value="${esc(a)}" ${a === f.scope ? 'selected' : ''}>AEN charge: ${esc(a)}</option>`).join('') + (S.B.srdens || []).map(a => `<option value="${esc(a)}" ${a === f.scope ? 'selected' : ''}>Sr DEN charge: ${esc(a)}</option>`).join('') : ''}</select></div>` : ''}
+      <div style="display:flex;gap:8px;margin-top:10px"><button class="btn primary" id="fOk">Approve</button><button class="btn secondary" id="fNo">Reject</button></div></div>`;
+    const decide = async ok => { const a = { code: f.code, req: f.req, ok }; if (canEdit && ok) { a.role = $('fRole').value; a.scope = $('fScope').value; }
+      $('fOk').disabled = $('fNo').disabled = true;
+      try { const r = await call('accessDecide', a); toast(r.status === 'approved' ? `Approved – ${r.name}'s phone opens now` : 'Rejected'); S.B.signins = Object.assign({}, S.B.signins || {}, { waiting: Math.max(0, ((S.B.signins || {}).waiting || 1) - 1) }); VIEWS.access(el); }
+      catch (e) { fail(e); $('fOk').disabled = $('fNo').disabled = false; } };
+    $('fOk').onclick = () => decide(true); $('fNo').onclick = () => decide(false);
+  };
+  $('aFind').onclick = () => show($('aCode').value.replace(/\D/g, ''));
+  $('aCode').onkeydown = e => { if (e.key === 'Enter') $('aFind').click(); };
+  $('aScan').onclick = async () => { const t = await scanQR(); if (!t) return; const m = /^TMSC1\|([^|]+)\|(\d{6})$/.exec(t.trim()); if (!m) { toast('This QR is not a TMS Control sign-in code', true); return; } $('aCode').value = m[2]; show(m[2], m[1]); };
+  $('iMake').onclick = async () => { const id = $('iWho').value; if (!id) { toast('Choose a person', true); return; } try { inviteModal(await call('inviteCreate', { userId: id })); } catch (e) { fail(e); } };
+  $('nMake').onclick = async () => { const person = { name: $('nName').value, mobile: $('nMob').value, role: $('nRole').value, scope: $('nScope').value }; try { const r = await call('inviteCreate', { person }); inviteModal(r); } catch (e) { fail(e); } };
+  el.querySelectorAll('[data-wd]').forEach(b => b.onclick = async () => { b.disabled = true; try { await call('inviteCancel', { req: b.dataset.wd }); toast('Invite withdrawn'); VIEWS.access(el); } catch (e) { fail(e); b.disabled = false; } });
 };
 VIEWS.overview = el => {
   const r = role(); const level = r === 'AEN' ? 'Unit' : r === 'SRDEN' ? 'AEN' : 'SrDEN';

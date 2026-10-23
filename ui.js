@@ -61,7 +61,7 @@ const IC = {
 IC.pulse = 'M22 12h-4l-3 9L9 3l-3 9H2';   // [H] 19-Oct: track health icon
 const NAVIC = { health: 'pulse', healthline: 'pulse', healthdata: 'up', /* [H] 19-Oct */ insp: 'clock', work: 'work', records: 'doc', position: 'chart', done: 'done', review: 'check', kpi: 'grid', overview: 'grid', urgent: 'alert', jobs: 'list', chronic: 'pin', plan: 'truck', forecast: 'trend', upload: 'up', users: 'users', settings: 'gear', uploads: 'history', phones: 'phone' };
 const svg = (k, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${IC[k] || IC.list}"></path></svg>`;
-NAVIC.lag = 'alert'; HI['Lagging units'] = 'पिछड़ी इकाइयाँ'; HI['What is still pending before'] = 'इससे पहले क्या शेष है';   // [E] 22-Oct: Lagging units
+NAVIC.access = 'phone'; HI['Sign-in approvals'] = 'प्रवेश स्वीकृति'; NAVIC.lag = 'alert'; HI['Lagging units'] = 'पिछड़ी इकाइयाँ'; HI['What is still pending before'] = 'इससे पहले क्या शेष है';   // [E] 22-Oct: Lagging units
 const navIcon = key => svg(NAVIC[key] || 'list', 'ic');
 
 // ---------- score ring ----------
