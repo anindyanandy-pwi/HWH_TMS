@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/logo.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="styles.css?v=202610241426">
+<link rel="stylesheet" href="styles.css?v=202610241721">
 <script>
 // Files dropped anywhere on the page never open in the browser; they go to the Upload page (admin).
 window.__bootErrors = [];
@@ -50,23 +50,23 @@ window.addEventListener('error', function (e) { window.__bootErrors.push((e.mess
 <div id="modal" class="modal hidden"><div class="modalbox"><div id="modalBody"></div><div class="modalbtns"><button id="modalCancel" class="btn secondary">Close</button><button id="modalOk" class="btn primary">OK</button></div></div></div>
 <div id="dropveil" class="dropveil hidden"><div>Release to load files</div></div>
 <div id="tip" class="tip hidden"></div>
-<script src="config.js?v=202610241426"></script>
+<script src="config.js?v=202610241721"></script>
 <script>/* [E] 22-Oct: a phone / PC that opened the app before may still hold old files (the saved copy of the service worker). This page is
    always fresh from the network; if the program files that came with it are of another build, clear the saved copy and load once more. */
-(function(){ var V='202610241426', got=(window.TMSC_CONFIG||{}).VERSION||''; if (!/^\d{12}$/.test(V) || got===V) return;
+(function(){ var V='202610241721', got=(window.TMSC_CONFIG||{}).VERSION||''; if (!/^\d{12}$/.test(V) || got===V) return;
   var k='tmsc.heal.'+V; try { if (sessionStorage.getItem(k)) return; sessionStorage.setItem(k,'1'); } catch(e) {}
   var done=function(){ location.reload(); };
   try { Promise.all([ (navigator.serviceWorker && navigator.serviceWorker.getRegistrations ? navigator.serviceWorker.getRegistrations().then(function(rs){ return Promise.all(rs.map(function(r){ return r.unregister(); })); }) : Promise.resolve()),
     (window.caches ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(x){ return caches.delete(x); })); }) : Promise.resolve()) ]).then(done, done); } catch(e) { done(); }
   document.write('<div style="font:15px system-ui;padding:24px">Updating to the latest version…</div>'); window.__TMSC_HEALING = true;
 })();</script>
-<script src="store.js?v=202610241426"></script>
-<script src="ui.js?v=202610241426"></script>
-<script src="stations.js?v=202610241426"></script>
-<script src="qr.js?v=202610241426"></script><!-- [E] 23-Oct: QR codes for sign-in -->
-<script src="app.js?v=202610241426"></script>
-<script src="field.js?v=202610241426"></script>
-<script src="health.js?v=202610241426"></script><!-- [H] 19-Oct: track health -->
+<script src="store.js?v=202610241721"></script>
+<script src="ui.js?v=202610241721"></script>
+<script src="stations.js?v=202610241721"></script>
+<script src="qr.js?v=202610241721"></script><!-- [E] 23-Oct: QR codes for sign-in -->
+<script src="app.js?v=202610241721"></script>
+<script src="field.js?v=202610241721"></script>
+<script src="health.js?v=202610241721"></script><!-- [H] 19-Oct: track health -->
 <script>
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(function () {});
 </script>
