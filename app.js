@@ -224,7 +224,7 @@ async function loadAll() {
   } catch (e) { if (!e.access) fail(e); }
   $('btnReload').disabled = false;
 }
-$('btnReload').onclick = () => { LAG = { d: null, at: 0, p: null }; loadAll(); };   // [E] 23-Oct: Refresh also asks for the lagging units again
+$('btnReload').onclick = () => { LAG = { d: null, at: 0, p: null }; PLN = {}; loadAll(); };   // [E] 23-Oct: Refresh also asks for the lagging units again
 if (window.UI) { $('btnReload').innerHTML = UI.svg('refresh') + `<span class="tl">${UI.t('Refresh')}</span>`; $('btnReload').setAttribute('aria-label', 'Refresh'); $('btnHelp').innerHTML = UI.svg('help') + `<span class="tl">${UI.t('Help')}</span>`; $('btnHelp').setAttribute('aria-label', 'Help'); }
 $('btnHelp').onclick = () => modal((window.UI ? UI.about() + '<hr style="border:0;border-top:1px solid var(--line);margin:16px 0">' : '') + helpHtml());
 window.addEventListener('online', () => { setNet(true); if (window.TMSC_FIELD) window.TMSC_FIELD.flush(); });
@@ -330,14 +330,48 @@ function kpiStrip() {
 }
 document.addEventListener('click', e => { const g = e.target.closest('.kpis [data-go]'); if (g) { S.view = g.dataset.go; render(); } });
 VIEWS.done = el => { const J = S.jobs.filter(j => inUnit(j) && !isOpen(j)); const F = filters(J); el.innerHTML = pageHead('Done & closed', 'Last 45 days') + `<div class="panel body">${F.bar}${jobTable(F.out)}</div>`; wireFilters(el); };
+// [E] 24-Oct: Inspections due – three tabs: what counts for the marks (reminders, as before), TMS's inspection plan of this month
+// (in-charge and every sectional JE / SSE – what each still has to inspect, what was planned earlier and not done) and next month.
+// The marks keep the Latest-inspection-report rule (user's decision 24-Oct); the plan is for chasing.
+let PLN = {};
+const PLAN_T = { PXING: 'P&C', CURVE: 'Curve', LWR: 'LWR', LXING: 'LC' };
+const PLAN_ST = { done: 'done in the month', late: 'done later', open: 'still to do', notdone: 'not done' };
+function planFetch(unit) { const k = unit || '__all'; const c = PLN[k]; if (c && c.d && Date.now() - c.at < 600000) return Promise.resolve(c.d); if (c && c.p) return c.p; const p = call('inspPlan', { unit: k }, { cache: true, timeout: 240000 }).then(d => { PLN[k] = { d, at: Date.now() }; return d; }, e => { delete PLN[k]; throw e; }); PLN[k] = { p }; return p; }
+const unitLabel = u => { const m = (S.B.units || []).find(x => x.unit === u); return (m && (m.label || m.Label)) || u; };
+const monName = m => { const [y, mo] = String(m).split('-'); return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][+mo - 1] + ' ' + y; };
+function planAssets(L) { const by = {}; L.forEach(x => { (by[x.t] = by[x.t] || []).push(x.a); }); return Object.keys(PLAN_T).filter(t => by[t]).map(t => `<div class="small"><b>${PLAN_T[t]} (${by[t].length}):</b> ${by[t].map(esc).join(', ')}</div>`).join(''); }
+function planCard(o, which) {
+  const L = o[which]; const todo = L.filter(x => x.st === 'open' || x.st === 'notdone'); const done = L.filter(x => x.st === 'done' || x.st === 'late');
+  const who = o.level === '2' ? '<span class="tag">in-charge</span>' : '<span class="tag">sectional</span>';
+  const miss = which === 'now' && o.missed.length ? `<div style="margin-top:6px"><div class="small od">Planned earlier this year, not done (${o.missed.length}):</div>${planAssets(o.missed)}</div>` : '';
+  const body = which === 'next' ? planAssets(L) : (todo.length ? `<div class="small" style="margin-bottom:2px">Still to inspect:</div>${planAssets(todo)}` : `<div class="small ok">Everything planned for the month is done.</div>`) + (done.length ? `<details style="margin-top:4px"><summary class="small muted">Done (${done.length})</summary>${planAssets(done)}</details>` : '') + miss;
+  return `<div class="panel body" style="margin-bottom:10px"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b>${esc(o.desig)}</b> ${who} <span class="muted small">${esc(unitLabel(o.unit))} · ${which === 'next' ? L.length + ' planned' : `${todo.length} to do · ${done.length} done`}${o.missed.length && which === 'now' ? ` · <span class="od">${o.missed.length} not done earlier</span>` : ''}</span></div><div style="margin-top:6px">${body}</div></div>`;
+}
 VIEWS.insp = el => {
-  const R = rems(); const t = S.B.today;
-  const head = pageHead('Inspections due', 'Reminders, not jobs: each inspection is recorded in TMS. A line clears by itself when the next TMS report shows the inspection – nothing to close here.');
-  if (!R.length) { el.innerHTML = head + `<div class="panel body"><div class="empty">No inspection pending${S.unit !== '__all' ? ' for ' + esc(S.unit) : ''}.</div></div>`; return; }
+  const R = rems(); const t = S.B.today; const tab = S.inspTab || 'marks';
+  const head = pageHead('Inspections due', 'Reminders, not jobs: each inspection is recorded in TMS. A line clears by itself when the next TMS report shows the inspection – nothing to close here.')
+    + `<div class="seg" style="margin-bottom:10px">${[['marks', 'Counts for the marks'], ['now', 'TMS plan – this month'], ['next', 'TMS plan – next month']].map(([k, x]) => `<button data-itab="${k}" class="${tab === k ? 'on' : ''}">${x}</button>`).join('')}</div>`;
+  const wire = () => el.querySelectorAll('[data-itab]').forEach(b => b.onclick = () => { S.inspTab = b.dataset.itab; render(); });
+  if (tab !== 'marks') {
+    el.innerHTML = head + `<div class="panel body"><div class="empty">Reading TMS's inspection plan…</div></div>`; wire();
+    planFetch(S.unit).then(P => {
+      if (S.view !== 'insp' || (S.inspTab || 'marks') !== tab) return;
+      if (!P.have) { el.innerHTML = head + `<div class="panel body"><div class="empty">TMS's inspection plan has not been received yet. It comes with the TMS Collector's daily set (report "Inspection planning").</div></div>`; wire(); return; }
+      const which = tab === 'now' ? 'now' : 'next'; const M = which === 'now' ? P.month : P.next;
+      const offs = P.officials.filter(o => o[which].length || (which === 'now' && o.missed.length));
+      const todo = offs.reduce((n, o) => n + o[which].filter(x => x.st === 'open' || x.st === 'notdone').length, 0);
+      const un = which === 'now' && P.unplanned.length ? `<div class="panel body" style="margin-bottom:10px;border-left:4px solid var(--warn)"><h3 style="margin:0 0 6px">Counts for the marks, but in nobody's TMS plan for ${monName(P.month)} (${P.unplanned.length})</h3><div class="small muted" style="margin-bottom:6px">Due by the marks rule – add them to the plan or inspect them this month.</div><div class="scroll"><table class="t compact"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th></tr></thead><tbody>${P.unplanned.map(x => `<tr><td>${esc(unitLabel(x.unit))}</td><td>${PLAN_T[x.t] || x.t} ${esc(x.a)}</td><td class="small">${esc(x.where)}</td><td>${dmy(x.due)}${x.over ? '<br><span class="od">overdue</span>' : ''}</td></tr>`).join('')}</tbody></table></div></div>` : '';
+      el.innerHTML = head + `<div class="small muted" style="margin:-4px 0 10px">TMS Inspection Planning Report for <b>${monName(M)}</b>${which === 'now' ? ` – ${todo} inspection(s) still to do` : ''} · TMS data fetched ${P.fetched ? dmy(P.fetched.slice(0, 10)) + ' ' + P.fetched.slice(11, 16) : '—'}. The in-charge's and each sectional official's own plan; the marks are counted from the Latest inspection report (tab "Counts for the marks").</div>`
+        + un + (offs.length ? offs.map(o => planCard(o, which)).join('') : `<div class="panel body"><div class="empty">Nothing planned in TMS for ${monName(M)}.</div></div>`);
+      wire();
+    }, e => { el.innerHTML = head + `<div class="panel body"><div class="empty">${esc(e.error || e)}</div></div>`; wire(); });
+    return;
+  }
+  if (!R.length) { el.innerHTML = head + `<div class="panel body"><div class="empty">No inspection pending${S.unit !== '__all' ? ' for ' + esc(S.unit) : ''}.</div></div>`; wire(); return; }
   const sec = Object.keys(REMIND).map(k => { const L = R.filter(x => x.Kind === k).sort((a, b) => String(a.Due || '9').localeCompare(String(b.Due || '9')) || String(a.Unit).localeCompare(String(b.Unit)) || (+a.Pos || 0) - (+b.Pos || 0)); if (!L.length) return '';
     const od = L.filter(x => x.Overdue === 'Yes').length;
     return `<div class="panel body"><h3 style="margin:0 0 8px">${esc(REMIND[k])} <span class="muted small">${L.length}${od ? ` · <span class="od">${od} overdue</span>` : ''}</span></h3><div class="scroll"><table class="t"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th><th>Detail</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.Unit)}</td><td>${esc(x.Title)}</td><td>${esc(x.Location)}</td><td>${dmy(x.Due)}${x.Overdue === 'Yes' || (x.Kind !== 'K1-INSP' && x.Due && String(x.Due).slice(0, 10) < t) ? '<br><span class="od">overdue</span>' : ''}</td><td class="small">${esc(x.Detail)}</td></tr>`).join('')}</tbody></table></div></div>`; }).join('');
-  el.innerHTML = head + sec;
+  el.innerHTML = head + sec; wire();
 };
 VIEWS.jobs = el => {
   const J = S.jobs.filter(inUnit); if (!S.f.st && S.f.st !== '') S.f.st = 'open'; const F = filters(J); const adm = role() === 'ADMIN';
@@ -708,6 +742,9 @@ function kpiExplain(k, x) {
       + `<p class="small muted">From TMS's dashboard lists "${k === 'K8' ? 'Repeated UML Peaks' : 'Repeated Blocks having CBML'}" (TMS Collector, daily). None on the list = full marks; this is how TMS gave its September marks.</p>`; }
   if (k === 'K16') { const T = { FP: 'Foot plate', RV: 'Rear vehicle', FOOT: 'On foot', TROLLEY: 'Trolley', PXING: 'P&C', PXING_JOINT: 'Joint P&C', OTHER: 'Other inspections', USFD: 'USFD', CURVE: 'Curve', LC: 'LC', LWR: 'LWR', DIAMOND: 'Diamond' };
     return tbl(['Days so far', 'Dates', 'Days by inspection type'], [[x.soFar ?? x.days, x.dates || '', Object.entries(x.byType || {}).map(([t, n]) => `${T[t] || t} ${n}`).join(', ')]]); }
+  if (k === 'K12' && x.rule === 'initial') return tbl(['AT welds done', 'tested', 'defective at the first test', 'period'], [[x.done, x.tested, x.defective, `${MONTHN(x.from)} – ${MONTHN(x.to)}`]])   // [E] 24-Oct
+    + (x.provisional ? `<div class="ban warn" style="margin:8px 0">${esc(x.provisional)}.</div>` : '') + list('Defective at the first test', x.list, x.defective)
+    + `<p class="small muted">TMS's rule: welds made in the six months that were defective at their FIRST USFD test (testing history read from TMS). A weld that became defective later does not count.</p>`;
   const e = Object.entries(x || {}).filter(([, v]) => v != null && typeof v !== 'object');
   return e.length ? tbl(['Item', 'Value'], e.map(([a, v]) => [a.replace(/([A-Z])/g, ' $1').toLowerCase(), v])) : '';
 }
