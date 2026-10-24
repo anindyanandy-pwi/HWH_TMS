@@ -72,6 +72,7 @@ window.TMSC = { call, esc, dmy, modal, toast, S, $, render: () => render(), relo
 const VIEWS = window.TMSC_VIEWS = {};
 const REMIND = { 'K1-INSP': 'Scheduled inspections (P&C / curve / LWR / LC)', 'K2-FP': 'Foot plate / rear vehicle – km not covered', 'K3-TROLLEY': 'Push trolley / on foot – km not covered', 'K16-DAYS': 'Field visit days' };
 const rems = () => (S.B.reminders || []).filter(inUnit);
+const planDue = () => (S.B.planDue || []).filter(x => S.unit === '__all' || x.u === S.unit);   // [E] 24-Oct: in-charge's TMS plan still to inspect
 const NAVS = {
   JE: [['work', 'My work'], ['insp', 'Inspections due'], ['records', 'My work records'], ['position', 'My position'], ['done', 'Done & closed']],
   SSE: [['work', 'My work'], ['insp', 'Inspections due'], ['review', 'Check JE work'], ['records', 'Work records'], ['position', 'My position'], ['kpi', 'KPI detail'], ['done', 'Done & closed']],
@@ -241,9 +242,9 @@ function banner() {
   // [E] 23-Oct: sign-in requests made in this person's name on another phone; approvals waiting for this approver
   const SI = S.B.signins || {}; (SI.mine || []).filter(x => x.status !== 'approved').forEach(x => out.push(`<div class="ban crit">Someone asked to sign in <b>as you</b> on a new phone (${esc(x.ua || 'unknown phone')}) on ${esc(String(x.at).slice(8, 10) + '-' + String(x.at).slice(5, 7) + ' ' + String(x.at).slice(11, 16))} – ${esc(x.status === 'open' ? 'waiting for approval' : x.status + (x.by ? ' by ' + x.by : ''))}. If this was not you, tell your AEN or the division office at once.</div>`));
   if (SI.waiting && S.view !== 'access') out.push(`<div class="ban warn"><b>${SI.waiting}</b> sign-in request(s) wait for your approval. <a href="#" data-go="access">Open</a></div>`);
-  const R = rems(); if (R.length) { const by = {}; R.forEach(x => { by[x.Kind] = by[x.Kind] || { n: 0, od: 0 }; by[x.Kind].n++; if (x.Overdue === 'Yes') by[x.Kind].od++; });
-    const k1 = by['K1-INSP'], parts = [];
-    if (k1) parts.push(`<b>${k1.n}</b> scheduled inspection(s) due${k1.od ? ` – <b>${k1.od} overdue</b>` : ''}`);
+  const R = rems().filter(x => x.Kind !== 'K1-INSP'); if (R.length || planDue().length) { const by = {}; R.forEach(x => { by[x.Kind] = by[x.Kind] || { n: 0, od: 0 }; by[x.Kind].n++; if (x.Overdue === 'Yes') by[x.Kind].od++; });
+    const PD = planDue(), k1 = PD.length ? { n: PD.length, od: PD.filter(x => x.st === 'late').length } : null, parts = [];   // [E] 24-Oct: in-charge's TMS plan
+    if (k1) parts.push(`<b>${k1.n}</b> inspection(s) due by the in-charge's TMS plan${k1.od ? ` – <b>${k1.od} planned earlier, not done</b>` : ''}`);
     if (by['K2-FP']) parts.push(`foot plate km not covered (${by['K2-FP'].n} unit${by['K2-FP'].n > 1 ? 's' : ''})`);
     if (by['K3-TROLLEY']) parts.push(`trolley / on foot km pending (${by['K3-TROLLEY'].n})`);
     if (by['K16-DAYS']) parts.push(`field days short (${by['K16-DAYS'].n})`);
@@ -254,7 +255,7 @@ function banner() {
 
 function nav() {
   const N = NAVS[role()] || NAVS.VIEWER; const J = S.jobs.filter(inUnit); const p = S.B.pending || {};
-  const cnt = { insp: rems().length || '', work: J.filter(isOpen).length, review: p.review || ((p.sse || 0) + (p.aen || 0)) || '', urgent: J.filter(j => j.Overdue || (isOpen(j) && +j.Priority === 1)).length, jobs: J.filter(isOpen).length, chronic: J.filter(j => j.Type === 'CHRONIC' && isOpen(j)).length, plan: J.filter(j => /TRC-(TAMP|RISK|THROUGH|DS)/.test(j.Type) && isOpen(j)).length, phones: p.devices || '', access: (S.B.signins || {}).waiting || '' /* [E] 23-Oct */ };
+  const cnt = { insp: (planDue().length + rems().filter(x => x.Kind !== 'K1-INSP').length) || '', work: J.filter(isOpen).length, review: p.review || ((p.sse || 0) + (p.aen || 0)) || '', urgent: J.filter(j => j.Overdue || (isOpen(j) && +j.Priority === 1)).length, jobs: J.filter(isOpen).length, chronic: J.filter(j => j.Type === 'CHRONIC' && isOpen(j)).length, plan: J.filter(j => /TRC-(TAMP|RISK|THROUGH|DS)/.test(j.Type) && isOpen(j)).length, phones: p.devices || '', access: (S.B.signins || {}).waiting || '' /* [E] 23-Oct */ };
   $('nav').innerHTML = N.map(x => x[0][0] === '#' ? `<div class="navgrp">${window.UI ? UI.t(x[0].slice(1)) : x[0].slice(1)}</div>` : `<button data-k="${x[0]}" class="${x[0] === S.view ? 'on' : ''}">${window.UI ? UI.navIcon(x[0]) : ''}${(b => `<span class="nl"><span class="p">${b.p}</span>${b.s ? `<span class="s">${b.s}</span>` : ''}</span>`)(window.UI ? UI.bi(x[1]) : { p: x[1], s: '' })}<span class="cnt${(x[0] === 'urgent' || x[0] === 'review' || x[0] === 'phones' || x[0] === 'access') && cnt[x[0]] ? ' crit' : ''}">${cnt[x[0]] ?? ''}</span></button>`).join('');
   $('nav').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.k; S.f = {}; S.sel = new Set(); render(); window.scrollTo(0, 0); };
 }
@@ -342,36 +343,34 @@ const monName = m => { const [y, mo] = String(m).split('-'); return ['January', 
 function planAssets(L) { const by = {}; L.forEach(x => { (by[x.t] = by[x.t] || []).push(x.a); }); return Object.keys(PLAN_T).filter(t => by[t]).map(t => `<div class="small"><b>${PLAN_T[t]} (${by[t].length}):</b> ${by[t].map(esc).join(', ')}</div>`).join(''); }
 function planCard(o, which) {
   const L = o[which]; const todo = L.filter(x => x.st === 'open' || x.st === 'notdone'); const done = L.filter(x => x.st === 'done' || x.st === 'late');
-  const who = o.level === '2' ? '<span class="tag">in-charge</span>' : '<span class="tag">sectional</span>';
   const miss = which === 'now' && o.missed.length ? `<div style="margin-top:6px"><div class="small od">Planned earlier this year, not done (${o.missed.length}):</div>${planAssets(o.missed)}</div>` : '';
   const body = which === 'next' ? planAssets(L) : (todo.length ? `<div class="small" style="margin-bottom:2px">Still to inspect:</div>${planAssets(todo)}` : `<div class="small ok">Everything planned for the month is done.</div>`) + (done.length ? `<details style="margin-top:4px"><summary class="small muted">Done (${done.length})</summary>${planAssets(done)}</details>` : '') + miss;
-  return `<div class="panel body" style="margin-bottom:10px"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b>${esc(o.desig)}</b> ${who} <span class="muted small">${esc(unitLabel(o.unit))} · ${which === 'next' ? L.length + ' planned' : `${todo.length} to do · ${done.length} done`}${o.missed.length && which === 'now' ? ` · <span class="od">${o.missed.length} not done earlier</span>` : ''}</span></div><div style="margin-top:6px">${body}</div></div>`;
+  return `<div class="panel body" style="margin-bottom:10px"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b>${esc(unitLabel(o.unit))}</b> <span class="muted small">${esc(o.desig)} · ${which === 'next' ? L.length + ' planned' : `${todo.length} to do · ${done.length} done`}${o.missed.length && which === 'now' ? ` · <span class="od">${o.missed.length} not done earlier</span>` : ''}</span></div><div style="margin-top:6px">${body}</div></div>`;
 }
+// [E] 24-Oct (user: "only the inspection due for the in-charges, nothing from sectionals"): the page shows the SSE/P.Way in-charge's own
+// TMS plan (Inspection Planning Report) – this month / next month – and the foot plate / trolley / field-day reminders. The marks
+// (KPI-1) are calculated as before, from the Latest inspection report.
 VIEWS.insp = el => {
-  const R = rems(); const t = S.B.today; const tab = S.inspTab || 'marks';
-  const head = pageHead('Inspections due', 'Reminders, not jobs: each inspection is recorded in TMS. A line clears by itself when the next TMS report shows the inspection – nothing to close here.')
-    + `<div class="seg" style="margin-bottom:10px">${[['marks', 'Counts for the marks'], ['now', 'TMS plan – this month'], ['next', 'TMS plan – next month']].map(([k, x]) => `<button data-itab="${k}" class="${tab === k ? 'on' : ''}">${x}</button>`).join('')}</div>`;
+  const R = rems().filter(x => x.Kind !== 'K1-INSP'); const t = S.B.today; const tab = S.inspTab && S.inspTab !== 'marks' ? S.inspTab : 'now';
+  const head = pageHead('Inspections due', 'The SSE/P.Way in-charge\'s own inspection plan in TMS. A line clears by itself when the next TMS data shows the inspection – nothing to close here.')
+    + `<div class="seg" style="margin-bottom:10px">${[['now', 'This month'], ['next', 'Next month'], ['other', 'Foot plate / trolley / field days' + (R.length ? ' (' + R.length + ')' : '')]].map(([k, x]) => `<button data-itab="${k}" class="${tab === k ? 'on' : ''}">${x}</button>`).join('')}</div>`;
   const wire = () => el.querySelectorAll('[data-itab]').forEach(b => b.onclick = () => { S.inspTab = b.dataset.itab; render(); });
-  if (tab !== 'marks') {
-    el.innerHTML = head + `<div class="panel body"><div class="empty">Reading TMS's inspection plan…</div></div>`; wire();
-    planFetch(S.unit).then(P => {
-      if (S.view !== 'insp' || (S.inspTab || 'marks') !== tab) return;
-      if (!P.have) { el.innerHTML = head + `<div class="panel body"><div class="empty">TMS's inspection plan has not been received yet. It comes with the TMS Collector's daily set (report "Inspection planning").</div></div>`; wire(); return; }
-      const which = tab === 'now' ? 'now' : 'next'; const M = which === 'now' ? P.month : P.next;
-      const offs = P.officials.filter(o => o[which].length || (which === 'now' && o.missed.length));
-      const todo = offs.reduce((n, o) => n + o[which].filter(x => x.st === 'open' || x.st === 'notdone').length, 0);
-      const un = which === 'now' && P.unplanned.length ? `<div class="panel body" style="margin-bottom:10px;border-left:4px solid var(--warn)"><h3 style="margin:0 0 6px">Counts for the marks, but in nobody's TMS plan for ${monName(P.month)} (${P.unplanned.length})</h3><div class="small muted" style="margin-bottom:6px">Due by the marks rule – add them to the plan or inspect them this month.</div><div class="scroll"><table class="t compact"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th></tr></thead><tbody>${P.unplanned.map(x => `<tr><td>${esc(unitLabel(x.unit))}</td><td>${PLAN_T[x.t] || x.t} ${esc(x.a)}</td><td class="small">${esc(x.where)}</td><td>${dmy(x.due)}${x.over ? '<br><span class="od">overdue</span>' : ''}</td></tr>`).join('')}</tbody></table></div></div>` : '';
-      el.innerHTML = head + `<div class="small muted" style="margin:-4px 0 10px">TMS Inspection Planning Report for <b>${monName(M)}</b>${which === 'now' ? ` – ${todo} inspection(s) still to do` : ''} · TMS data fetched ${P.fetched ? dmy(P.fetched.slice(0, 10)) + ' ' + P.fetched.slice(11, 16) : '—'}. The in-charge's and each sectional official's own plan; the marks are counted from the Latest inspection report (tab "Counts for the marks").</div>`
-        + un + (offs.length ? offs.map(o => planCard(o, which)).join('') : `<div class="panel body"><div class="empty">Nothing planned in TMS for ${monName(M)}.</div></div>`);
-      wire();
-    }, e => { el.innerHTML = head + `<div class="panel body"><div class="empty">${esc(e.error || e)}</div></div>`; wire(); });
-    return;
+  if (tab === 'other') {
+    const sec = ['K2-FP', 'K3-TROLLEY', 'K16-DAYS'].map(k => { const L = R.filter(x => x.Kind === k).sort((a, b) => String(a.Due || '9').localeCompare(String(b.Due || '9')) || String(a.Unit).localeCompare(String(b.Unit))); if (!L.length) return '';
+      return `<div class="panel body"><h3 style="margin:0 0 8px">${esc(REMIND[k])} <span class="muted small">${L.length}</span></h3><div class="scroll"><table class="t"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th><th>Detail</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.Unit)}</td><td>${esc(x.Title)}</td><td>${esc(x.Location)}</td><td>${dmy(x.Due)}${x.Due && String(x.Due).slice(0, 10) < t ? '<br><span class="od">overdue</span>' : ''}</td><td class="small">${esc(x.Detail)}</td></tr>`).join('')}</tbody></table></div></div>`; }).join('');
+    el.innerHTML = head + (sec || `<div class="panel body"><div class="empty">Nothing pending${S.unit !== '__all' ? ' for ' + esc(S.unit) : ''}.</div></div>`); wire(); return;
   }
-  if (!R.length) { el.innerHTML = head + `<div class="panel body"><div class="empty">No inspection pending${S.unit !== '__all' ? ' for ' + esc(S.unit) : ''}.</div></div>`; wire(); return; }
-  const sec = Object.keys(REMIND).map(k => { const L = R.filter(x => x.Kind === k).sort((a, b) => String(a.Due || '9').localeCompare(String(b.Due || '9')) || String(a.Unit).localeCompare(String(b.Unit)) || (+a.Pos || 0) - (+b.Pos || 0)); if (!L.length) return '';
-    const od = L.filter(x => x.Overdue === 'Yes').length;
-    return `<div class="panel body"><h3 style="margin:0 0 8px">${esc(REMIND[k])} <span class="muted small">${L.length}${od ? ` · <span class="od">${od} overdue</span>` : ''}</span></h3><div class="scroll"><table class="t"><thead><tr><th>Unit</th><th>What</th><th>Where</th><th>Due</th><th>Detail</th></tr></thead><tbody>${L.map(x => `<tr><td>${esc(x.Unit)}</td><td>${esc(x.Title)}</td><td>${esc(x.Location)}</td><td>${dmy(x.Due)}${x.Overdue === 'Yes' || (x.Kind !== 'K1-INSP' && x.Due && String(x.Due).slice(0, 10) < t) ? '<br><span class="od">overdue</span>' : ''}</td><td class="small">${esc(x.Detail)}</td></tr>`).join('')}</tbody></table></div></div>`; }).join('');
-  el.innerHTML = head + sec; wire();
+  el.innerHTML = head + `<div class="panel body"><div class="empty">Reading TMS's inspection plan…</div></div>`; wire();
+  planFetch(S.unit).then(P => {
+    if (S.view !== 'insp' || (S.inspTab && S.inspTab !== 'marks' ? S.inspTab : 'now') !== tab) return;
+    if (!P.have) { el.innerHTML = head + `<div class="panel body"><div class="empty">TMS's inspection plan has not been received yet. It comes with the TMS Collector's daily set (report "Inspection planning").</div></div>`; wire(); return; }
+    const which = tab === 'now' ? 'now' : 'next'; const M = which === 'now' ? P.month : P.next;
+    const offs = P.officials.filter(o => o.level === '2' && (o[which].length || (which === 'now' && o.missed.length)));
+    const todo = offs.reduce((n, o) => n + o[which].filter(x => x.st === 'open' || x.st === 'notdone').length, 0), late = which === 'now' ? offs.reduce((n, o) => n + o.missed.length, 0) : 0;
+    el.innerHTML = head + `<div class="small muted" style="margin:-4px 0 10px">SSE/P.Way in-charge's plan in TMS for <b>${monName(M)}</b>${which === 'now' ? ` – <b>${todo}</b> still to inspect${late ? `, <span class="od">${late} planned earlier and not done</span>` : ''}` : ''} · TMS data fetched ${P.fetched ? dmy(P.fetched.slice(0, 10)) + ' ' + P.fetched.slice(11, 16) : '—'}.</div>`
+      + (offs.length ? offs.map(o => planCard(o, which)).join('') : `<div class="panel body"><div class="empty">Nothing planned in TMS for ${monName(M)}.</div></div>`);
+    wire();
+  }, e => { el.innerHTML = head + `<div class="panel body"><div class="empty">${esc(e.error || e)}</div></div>`; wire(); });
 };
 VIEWS.jobs = el => {
   const J = S.jobs.filter(inUnit); if (!S.f.st && S.f.st !== '') S.f.st = 'open'; const F = filters(J); const adm = role() === 'ADMIN';
@@ -644,7 +643,9 @@ async function versionCheck(fresh) {
   const rc = b.recalc;
   if (b.server) add(!!rc && rc.server === b.server, 'KPI marks', rc ? (rc.server === b.server ? `calculated ${tm(rc.when)} by this program` : `calculated ${tm(rc.when)} by an older program`) : 'no recalculation recorded since the Version check was added', 'The marks were calculated before the last push. The server recalculates by itself within 15 minutes (automatic recalculation); or press Recalculate (Settings, at the top) now.');
   const want = CFG.COLLECTOR || ''; let seen = null; try { seen = JSON.parse(localStorage.getItem('tmsc.collVer') || 'null'); } catch (e) { }
-  if (want) add(seen ? seen.ver === want : null, 'TMS Collector', seen ? (seen.ver === want ? `running ${seen.ver} (hand-over ${tm(seen.at)})` : `the last hand-over (${tm(seen.at)}) came from ${seen.ver} – the delivered one is ${want}. A reloaded collector shows here with its next hand-over (fetch + upload)`) : `delivered ${want} – no hand-over seen on this computer yet`, 'The collector reloads itself within 20 minutes when no fetch or upload is going on (from the 20-Oct collector on); or reload it now in chrome://extensions (the round arrow on its card), then run it.');
+  // [E] 24-Oct: a collector NEWER than the one recorded at the last push (it reloaded itself from a newer delivery) is fine – only an older one needs a reload
+  const stamp = v => (String(v || '').match(/\((\d{12})\)/) || [])[1] || ''; const newer = seen && stamp(seen.ver) && stamp(want) && stamp(seen.ver) > stamp(want);
+  if (want) add(seen ? (seen.ver === want || newer) : null, 'TMS Collector', seen ? (seen.ver === want ? `running ${seen.ver} (hand-over ${tm(seen.at)})` : newer ? `running ${seen.ver} (hand-over ${tm(seen.at)}) – newer than the one recorded at the last push (${want}); push.bat records it` : `the last hand-over (${tm(seen.at)}) came from ${seen.ver} – the delivered one is ${want}. A reloaded collector shows here with its next hand-over (fetch + upload)`) : `delivered ${want} – no hand-over seen on this computer yet`, 'The collector reloads itself within 20 minutes when no fetch or upload is going on (from the 20-Oct collector on); or reload it now in chrome://extensions (the round arrow on its card), then run it.');
   else add(null, 'TMS Collector', 'not checked – push.bat has not yet recorded the delivered collector version', 'Run push.bat once.');
   // [E] 20-Oct: running by itself – automatic recalculation (server trigger) and the PC's automatic push (heartbeat)
   const A = b.auto;

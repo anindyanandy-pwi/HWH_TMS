@@ -1,1 +1,1 @@
-window.TMSC_CONFIG = { API: 'https://script.google.com/macros/s/AKfycbxRe94DfzFWI17P86BxrcCDpBCanSTm4ICMNJtRjXAFJlula0O4phlHT_EvuHrZa91kEQ/exec', VERSION: '202610240915', COLLECTOR: '1.1.0 (202610240909)' };
+window.TMSC_CONFIG = { API: 'https://script.google.com/macros/s/AKfycbxRe94DfzFWI17P86BxrcCDpBCanSTm4ICMNJtRjXAFJlula0O4phlHT_EvuHrZa91kEQ/exec', VERSION: '202610241426', COLLECTOR: '1.1.0 (202610241039)' };
