@@ -336,15 +336,21 @@ VIEWS.done = el => { const J = S.jobs.filter(j => inUnit(j) && !isOpen(j)); cons
 // The marks keep the Latest-inspection-report rule (user's decision 24-Oct); the plan is for chasing.
 let PLN = {};
 const PLAN_T = { PXING: 'P&C', CURVE: 'Curve', LWR: 'LWR', LXING: 'LC' };
-const PLAN_ST = { done: 'done in the month', late: 'done later', open: 'still to do', notdone: 'not done' };
+const PLAN_ST = { done: 'done in the month', late: 'done later', open: 'still to do', notdone: 'not done', latedone: 'done late' };
 function planFetch(unit) { const k = unit || '__all'; const c = PLN[k]; if (c && c.d && Date.now() - c.at < 600000) return Promise.resolve(c.d); if (c && c.p) return c.p; const p = call('inspPlan', { unit: k }, { cache: true, timeout: 240000 }).then(d => { PLN[k] = { d, at: Date.now() }; return d; }, e => { delete PLN[k]; throw e; }); PLN[k] = { p }; return p; }
 const unitLabel = u => { const m = (S.B.units || []).find(x => x.unit === u); return (m && (m.label || m.Label)) || u; };
 const monName = m => { const [y, mo] = String(m).split('-'); return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][+mo - 1] + ' ' + y; };
 function planAssets(L) { const by = {}; L.forEach(x => { (by[x.t] = by[x.t] || []).push(x.a); }); return Object.keys(PLAN_T).filter(t => by[t]).map(t => `<div class="small"><b>${PLAN_T[t]} (${by[t].length}):</b> ${by[t].map(esc).join(', ')}</div>`).join(''); }
 function planCard(o, which) {
   const L = o[which]; const todo = L.filter(x => x.st === 'open' || x.st === 'notdone'); const done = L.filter(x => x.st === 'done' || x.st === 'late');
-  const miss = which === 'now' && o.missed.length ? `<div style="margin-top:6px"><div class="small od">Planned earlier this year, not done (${o.missed.length}):</div>${planAssets(o.missed)}</div>` : '';
-  const body = which === 'next' ? planAssets(L) : (todo.length ? `<div class="small" style="margin-bottom:2px">Still to inspect:</div>${planAssets(todo)}` : `<div class="small ok">Everything planned for the month is done.</div>`) + (done.length ? `<details style="margin-top:4px"><summary class="small muted">Done (${done.length})</summary>${planAssets(done)}</details>` : '') + miss;
+  // [E] 26-Oct (user: done-late points stay on the page, folded away, for record): TMS's plan keeps a point "not done" when it was
+  // inspected after the planned month – the inspection history (TMS's register list) gives the real date and official
+  const dShort = s => s ? `${s.slice(8, 10)}-${s.slice(5, 7)}-${s.slice(0, 4)}` : '';
+  const lateL = which === 'now' ? (o.lateDone || []) : [];
+  const othL = o.missed.filter(x => x.oo);
+  const miss = which === 'now' && o.missed.length ? `<div style="margin-top:6px"><div class="small od">Planned earlier this year, not done (${o.missed.length}):</div>${planAssets(o.missed)}${othL.length ? `<div class="small muted" style="margin-top:2px">Inspected since, but not by the in-charge: ${othL.map(x => `${esc(x.a)} on ${dShort(x.oo)} by ${esc(x.ob)}`).join('; ')}</div>` : ''}</div>` : '';
+  const lateBox = lateL.length ? `<details style="margin-top:6px"><summary class="small muted">Done late – for record (${lateL.length}): TMS's plan still shows them not done</summary><div class="small">${lateL.slice().sort((p, q) => String(p.m).localeCompare(String(q.m)) || String(p.a).localeCompare(String(q.a))).map(x => `${PLAN_T[x.t] || esc(x.t)} ${esc(x.a)} – planned for ${monName(x.m)}, inspected on ${dShort(x.on)} by ${esc(x.by)}`).join('<br>')}</div></details>` : '';
+  const body = which === 'next' ? planAssets(L) : (todo.length ? `<div class="small" style="margin-bottom:2px">Still to inspect:</div>${planAssets(todo)}` : `<div class="small ok">Everything planned for the month is done.</div>`) + (done.length ? `<details style="margin-top:4px"><summary class="small muted">Done (${done.length})</summary>${planAssets(done)}</details>` : '') + miss + lateBox;
   return `<div class="panel body" style="margin-bottom:10px"><div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap"><b>${esc(unitLabel(o.unit))}</b> <span class="muted small">${esc(o.desig)} · ${which === 'next' ? L.length + ' planned' : `${todo.length} to do · ${done.length} done`}${o.missed.length && which === 'now' ? ` · <span class="od">${o.missed.length} not done earlier</span>` : ''}</span></div><div style="margin-top:6px">${body}</div></div>`;
 }
 // [E] 24-Oct (user: "only the inspection due for the in-charges, nothing from sectionals"): the page shows the SSE/P.Way in-charge's own
@@ -365,7 +371,7 @@ VIEWS.insp = el => {
     if (S.view !== 'insp' || (S.inspTab && S.inspTab !== 'marks' ? S.inspTab : 'now') !== tab) return;
     if (!P.have) { el.innerHTML = head + `<div class="panel body"><div class="empty">TMS's inspection plan has not been received yet. It comes with the TMS Collector's daily set (report "Inspection planning").</div></div>`; wire(); return; }
     const which = tab === 'now' ? 'now' : 'next'; const M = which === 'now' ? P.month : P.next;
-    const offs = P.officials.filter(o => o.level === '2' && (o[which].length || (which === 'now' && o.missed.length)));
+    const offs = P.officials.filter(o => o.level === '2' && (o[which].length || (which === 'now' && (o.missed.length || (o.lateDone || []).length))));
     const todo = offs.reduce((n, o) => n + o[which].filter(x => x.st === 'open' || x.st === 'notdone').length, 0), late = which === 'now' ? offs.reduce((n, o) => n + o.missed.length, 0) : 0;
     el.innerHTML = head + `<div class="small muted" style="margin:-4px 0 10px">SSE/P.Way in-charge's plan in TMS for <b>${monName(M)}</b>${which === 'now' ? ` – <b>${todo}</b> still to inspect${late ? `, <span class="od">${late} planned earlier and not done</span>` : ''}` : ''} · TMS data fetched ${P.fetched ? dmy(P.fetched.slice(0, 10)) + ' ' + P.fetched.slice(11, 16) : '—'}.</div>`
       + (offs.length ? offs.map(o => planCard(o, which)).join('') : `<div class="panel body"><div class="empty">Nothing planned in TMS for ${monName(M)}.</div></div>`);
