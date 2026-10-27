@@ -2737,9 +2737,17 @@ function kpiK12(unit, welds, defects, ym, initialDays = 180, rule = 'latest') { 
   const done = mine.reduce((a, w) => a + (+w.done || 0), 0), tested = mine.reduce((a, w) => a + (+w.tested || 0), 0);
   // [E] 16-Oct: TMS rule (AT Welds Done/Defective report) – welds done in the six months whose LATEST USFD result is defective, of those tested.
   // Used when the weld register gave the latest result (WeldMonths.Defective); else the older reading from USFD defect lists below.
-  if (rule !== 'early' && mine.some(w => w.defective != null && w.defective !== '')) { const def = mine.reduce((a, w) => a + (+w.defective || 0), 0);
+  if (rule !== 'early' && rule !== 'initial' && mine.some(w => w.defective != null && w.defective !== '')) { const def = mine.reduce((a, w) => a + (+w.defective || 0), 0);
     if (!tested) return { value: null, marks: def ? 0 : null, detail: { done, tested, defective: def, from, to: ym } };
     const v = def / tested * 100; return { value: v, marks: marks('K12', v), detail: { done, tested, defective: def, from, to: ym, basis: `Latest USFD result: ${def} of ${tested} tested AT welds (done ${from} to ${ym}) defective` } }; }
+  // [E] 24-Oct: rule 'initial' (TMS: "welds found defective during INITIAL testing") – a weld counts only when its FIRST USFD weld
+  // test after welding was not GW (from TMS's testing history, recorded for good even after the weld is removed); later defects do not.
+  if (rule === 'initial') {
+    const end = monthRange(ym).to; const bad = defects.filter(d => d.unit === unit && d.bad && d.welded && inWin(String(d.welded).slice(0, 7)) && d.first && String(d.first).slice(0, 10) <= end);
+    if (!tested) return { value: null, marks: bad.length ? 0 : null, detail: { done, tested, defective: bad.length, from, to: ym, rule } };
+    const v = bad.length / tested * 100;
+    return { value: v, marks: marks('K12', v), detail: { done, tested, defective: bad.length, from, to: ym, rule, basis: `Defective at the first USFD test: ${bad.length} of ${tested} tested AT welds (done ${from} to ${ym})`, list: bad.slice(0, 30).map(d => `${d.section} ${d.line} ${d.km}/${d.m} ${d.rail} welded ${d.welded}, first test ${d.first}: ${d.cls}`) } };
+  }
   const seen = new Set(); const bad = [];
   for (const d of defects) {
     if (d.unit !== unit || d.kind !== 'WELD' || !d.welded || !inWin(d.welded.slice(0, 7))) continue;
@@ -2800,15 +2808,20 @@ function kpiK7(unit, oms, J) {
 // [E] 21-Oct: K8 / K9 as TMS counts them – REPEATED UML peak locations / repeated CBML blocks of the SSE (TMS dashboard lists,
 // see trcrep.js) open on the day of the marks, compared with the 1st of the month before (% reduction, the K5–K9 bands).
 // None open = full marks; open ones without a known count a month earlier = no reduction shown = 0 (what TMS gave in September).
-function kpiTRCrep(k, items, unit, asOn, prevOn) {
+function kpiTRCrep(k, items, unit, asOn, prevOn, peak) {
   const mine = items.filter(i => i.unit === unit); const open = openOn(mine, asOn);
   const cur = open.length; const prev = prevOn ? openOn(mine, prevOn).length : null;
   const list = open.slice(0, 30).map(i => [i.section, i.line, i.km != null ? i.km + '/' + (i.m == null ? '' : i.m) : '', i.block != null ? 'block ' + i.block : '', i.run ? 'run ' + i.run : '', i.repeated != null ? 'repeated ' + i.repeated + '×' : ''].filter(Boolean).join(' '));
-  const what = k === 'K8' ? 'repeated UML peak locations' : 'repeated CBML blocks';
-  if (!cur) return { value: prev ? 100 : 0, marks: KPI[k].max, detail: { cur, prev, list, basis: `TMS rule: no ${what} on TMS's list for this SSE` } };
-  if (prev == null) return { value: null, marks: 0, detail: { cur, prev, list, basis: `TMS rule: ${cur} ${what} on TMS's list; the count a month earlier is not known here, so no reduction can be shown (0 marks)` } };
+  const what = k === 'K8' ? 'repeated UML peak locations' : k === 'K7' ? `repeated OMS peak locations (> 0.${String(peak || 15).padStart(2, '0')} g)` : 'repeated CBML blocks';
+  // [E] 27-Oct: K7 also gives the locations themselves (one K7-OMS job each)
+  const locs = k === 'K7' ? open.map(i => ({ section: i.section, line: i.line, km: i.km, m: i.m, kmTo: i.kmTo, mTo: i.mTo, place: i.place, run: i.run, repeated: i.repeated })) : undefined;
+  if (k === 'K7') list.splice(0, list.length, ...open.slice(0, 30).map(i => [i.section, i.line, i.km != null ? i.km + '/' + (i.m == null ? '' : i.m) : '', i.place || '', i.run ? 'OMS run ' + i.run : '', i.repeated != null ? 'repeated ' + i.repeated + '×' : ''].filter(Boolean).join(' ')));
+  if (!cur) return { value: prev ? 100 : 0, marks: KPI[k].max, list: locs, detail: { cur, prev, list, basis: `TMS rule: no ${what} on TMS's list for this SSE` } };
+  // [E] 27-Oct (user): K7 with the count a month earlier unknown = "at risk – TMS's mark decides", not a made-up 0 (K8 / K9 unchanged)
+  if (prev == null) return k === 'K7' ? { value: null, marks: null, list: locs, detail: { cur, prev, list, atRisk: true, basis: `TMS rule: ${cur} ${what} on TMS's list; the count on the 1st of the month before was not collected, so the reduction cannot be worked out here – at risk, TMS's mark decides` } }
+    : { value: null, marks: 0, detail: { cur, prev, list, basis: `TMS rule: ${cur} ${what} on TMS's list; the count a month earlier is not known here, so no reduction can be shown (0 marks)` } };
   const v = reduction(prev, cur);
-  return { value: v, marks: marks(k, v), detail: { cur, prev, list, basis: `TMS rule: ${what} on TMS's list – ${prev} a month earlier, ${cur} now` } };
+  return { value: v, marks: marks(k, v), list: locs, detail: { cur, prev, list, basis: `TMS rule: ${what} on TMS's list – ${prev} a month earlier, ${cur} now` } };
 }
 function kpiTRC(k, cur, prev) { if (cur == null) return { value: null, marks: null, detail: {} }; const v = reduction(prev, cur); return { value: prev == null ? null : v, marks: prev == null ? null : marks(k, v), detail: { cur, prev } }; }
 
@@ -3031,7 +3044,144 @@ function trcRepFromPage(html) {
   return out;
 }
 
-return { trcRepKind, isTrcRepPage, umlPendFromPage, trcRepFromPage };
+// ---------- [E] 27-Oct-2026: K7 – TMS's own "Repeated locations having OMS Peaks" (dashboard item OMSREPEATEDLOC) ----------
+// Found live 26/27-Oct (read only): our K7 counted every km with a peak in two consecutive OMS runs (22 km, 21 jobs, K7 forecast 0 for
+// 10 units); TMS's dashboard tile showed 2 = the > 0.15 g tab of PopUpOMSRepeatedLocation.jsp (AZ Azimganj-Nalhati DN 5/972, DKAE
+// Bally-Saktigarh DN 1 15/701). Detail page Dashboard/PopUpRepeatedOMSLocations.jsp?authlvl=5&cond=HWH&peakflag=12|15|20&periodflag=3
+// (3 = this year, "as on today" – TMS has no date choice), title "Repeated locations having Vertical or Lateral Acceleration Peaks
+// > 0.12 g", one table: Sr# | Railway | Division | Sr.DEN | ADEN | SSE | Section | Line | Block Section/Yard | Location From km m |
+// Location To km m | Route Classification | OMS Run Date | OMS Run No. | Repeat Count | Site Particulars | Peak Information | Maintenance Input.
+/** the peak threshold of a repeated-OMS page (12 / 15 / 20 / 25 = 0.12 g …) or null */
+function omsRepPeak(html) {
+  const h = strip(html); const m = /Repeated\s+locations\s+having\s+.*?Peaks?\s*>\s*0?\.(\d{1,2})\s*g/i.exec(h);
+  if (!m || !/Repeat\s*Count/i.test(h)) return null; const p = m[1].length === 1 ? m[1] + '0' : m[1]; return +p;
+}
+const isOmsRepPage = html => omsRepPeak(html) != null;
+/** rows: {list:'ROMS', peak, sse, unit, section, line, place, km, m, kmTo, mTo, route, run, runNo, repeated, key} */
+function omsRepFromPage(html) {
+  html = String(html || ''); const peak = omsRepPeak(html); if (peak == null) return [];
+  const out = []; const seen = {};
+  const re = /<table\b([^>]*)>([\s\S]*?)<\/table>/gi; let m;
+  while ((m = re.exec(html))) {
+    const rows = [...m[2].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => [...r[1].matchAll(/<(t[hd])\b([^>]*)>([\s\S]*?)<\/t[hd]>/gi)]
+      .map(c => ({ th: c[1].toLowerCase() === 'th', span: +((/colspan\s*=\s*["']?(\d+)/i.exec(c[2]) || [])[1] || 1), t: strip(c[3]) })));
+    const hi = rows.findIndex(r => r.some(c => /^SSE$/i.test(c.t)) && r.some(c => /Repeat\s*Count/i.test(c.t))); if (hi < 0) continue;
+    const head = rows[hi]; const sub = rows[hi + 1] && rows[hi + 1].length && rows[hi + 1].every(c => c.th) ? rows[hi + 1] : [];
+    const cols = []; let si = 0;
+    head.forEach(c => { if (c.span > 1) { for (let k = 0; k < c.span; k++) cols.push((c.t + ' ' + ((sub[si++] || {}).t || '')).trim()); } else cols.push(c.t); });
+    const ci = rx => cols.findIndex(c => rx.test(c));
+    const iSSE = ci(/^SSE$/i), iSec = ci(/Section$/i), iLine = ci(/^Line$/i), iPlace = ci(/Block Section/i), iKm = ci(/^Location From km$/i), iM = ci(/^Location From m$/i),
+      iKmTo = ci(/^Location To km$/i), iMTo = ci(/^Location To m$/i), iRoute = ci(/Route/i), iRun = ci(/OMS\s*Run\s*Date/i), iRunNo = ci(/OMS\s*Run\s*No/i), iRep = ci(/Repeat\s*Count/i);
+    for (const r of rows.slice(hi + 1)) {
+      if (!r.length || !/^\d+$/.test(r[0].t) || r.some(c => c.th)) continue;
+      const v = i => (i >= 0 && r[i] ? r[i].t : '');
+      const sse = v(iSSE);
+      const o = { list: 'ROMS', peak, sse, unit: tmsUnit(sse) || '', section: v(iSec), line: v(iLine), place: v(iPlace), km: num(v(iKm)), m: num(v(iM)), kmTo: num(v(iKmTo)), mTo: num(v(iMTo)),
+        route: v(iRoute), run: isoDMY(v(iRun)), runNo: v(iRunNo).replace(/\s+/g, ''), repeated: num(v(iRep)) };
+      // the key leaves out the run and the count: the same location found again in a later run stays one item
+      const base = ['ROMS' + peak, o.unit, o.section, o.line, o.km, o.m].join('|');
+      seen[base] = (seen[base] || 0) + 1; o.key = seen[base] > 1 ? base + '|' + seen[base] : base;
+      out.push(o);
+    }
+  }
+  return out;
+}
+
+return { trcRepKind, isTrcRepPage, umlPendFromPage, trcRepFromPage, omsRepPeak, isOmsRepPage, omsRepFromPage };
+})();
+__m['inspchart.js'] = (function(){
+// [E] 27-Oct-2026: TMS "Inspection Analysis & Report → Inspection Chart → Chart" (V2/InspectionChart.jsp → the pop-up
+// PopUpInspectionChartJESEModified.jsp?url=2~<roleid>~01/MM/YYYY~01/MM/YYYY for an SSE/P.Way in-charge; read only). User (27-Oct): not a
+// page of its own – it refines the reports (Lagging units, My position, the messages, the morning export); in-charges only.
+// Found live 26/27-Oct (LLH, Sep–Oct 2026): one <table> per part, no nested tables:
+//   "1. PUSH TROLLEY/MOPED TROLLEY/MOTOR TROLLEY", "2. ON FOOT", "3. FOOT PLATE/REAR VEHICLE" – each followed by one grid per section:
+//     row 0 = section ("HWH-BLY-BDC-SKG"); row 1 = "Stations →" (colspan 2) + one cell per station-to-station block ("6/0--BEQ", "BEQ--BLY" …);
+//     then per month (first cell "Sep-26", rowspan = number of lines) one row per line: line name + cells (colspan = blocks with the same
+//     dates) holding the LATEST date of each kind in the month: "05", "25(FP)-07(RV)"; empty = no trip over that block in the month.
+//   "Inspection Planned For Sep-26 to Oct-26": Feature | months (planned counts of CURVE / LEVEL CROSSING / LWR / POINTS AND CROSSING).
+//   "4. POINTS & CROSSING INSPECTION": Station | Main Line | Passenger Line Excluding Main Line | Non Passenger Line | months (inspected).
+//   "5. LEVEL CROSSING INSPECTION" / "6. LWR" / "7. CURVE" in one table: "Total Level Crossing: 9" | inspected per month.
+//   "8. NIGHT INSPECTION" (Level Crossing / Foot Plate / Rear Window) and "9. OTHER INSPECTION" in one table: label | text per month.
+//   "REMARKS": Sr DEN/DEN's Remark: | ADEN's Remark: | SSE/SE's Remark: – text per month.
+// The page does not name the official – the collector sends roleId / designation with it. Works without a browser DOM.
+const {decode} = __m['tmstable.js'];
+
+const strip = s => decode(String(s == null ? '' : s).replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/[\u0000-\u001f\u007f-\u009f�]/g, ' ').replace(/\s+/g, ' ').trim();
+const MONS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+/** "Sep-26" → "2026-09" */
+function chartMonth(s) { const m = /^([A-Za-z]{3})[- ](\d{2}|\d{4})$/.exec(String(s || '').trim()); if (!m || !MONS[m[1].toLowerCase()]) return null; const y = m[2].length === 2 ? '20' + m[2] : m[2]; return y + '-' + String(MONS[m[1].toLowerCase()]).padStart(2, '0'); }
+const num = s => { const t = String(s == null ? '' : s).trim(); return t !== '' && !isNaN(+t) ? +t : null; };
+/** "03(FP)-22(RV)" → [{d:3,t:'FP'},{d:22,t:'RV'}]; "05" → [{d:5,t:''}] */
+function chartDates(s) { const out = []; String(s || '').replace(/(\d{1,2})(?:\s*\(\s*([A-Za-z]+)\s*\))?/g, (m, d, t) => { if (+d >= 1 && +d <= 31) out.push({ d: +d, t: (t || '').toUpperCase() }); return m; }); return out; }
+
+function tablesOf(html) {
+  return [...String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/gi)]
+    .map(t => [...t[1].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => [...r[1].matchAll(/<t[hd]\b([^>]*)>([\s\S]*?)<\/t[hd]>/gi)]
+      .map(c => ({ cs: +((/colspan\s*=\s*["']?(\d+)/i.exec(c[1]) || [])[1] || 1), rs: +((/rowspan\s*=\s*["']?(\d+)/i.exec(c[1]) || [])[1] || 1), t: strip(c[2]) }))).filter(r => r.length));
+}
+const isInspChartPage = html => /PUSH\s+TROLLEY/i.test(String(html || '')) && /FOOT\s+PLATE/i.test(String(html || '')) && /Stations\s*(&rarr;|→|-&gt;)/i.test(String(html || ''));
+
+/** the whole chart: { reportedAt, months, grids:[{kind, section, blocks, rows:[{month, line, cells:[text per block]}]}], planned, pxing, totals, night, other, remarks } */
+function inspChartFromPage(html) {
+  html = String(html || ''); if (!isInspChartPage(html)) return null;
+  const rep = /Reporting\s+Date\s*:\s*(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2})/i.exec(strip(html));
+  const out = { reportedAt: rep ? `${rep[3]}-${rep[2]}-${rep[1]}T${rep[4]}` : '', months: [], grids: [], planned: {}, pxing: [], totals: {}, night: {}, other: {}, remarks: {} };
+  const months = new Set(); let kind = null;
+  const monthsOf = row => row.map(c => chartMonth(c.t));
+  for (const T of tablesOf(html)) {
+    const first = T[0] && T[0][0] ? T[0][0].t : '';
+    if (/^1\.\s*PUSH\s+TROLLEY/i.test(first)) { kind = 'TROLLEY'; continue; }
+    if (/^2\.\s*ON\s+FOOT/i.test(first)) { kind = 'FOOT'; continue; }
+    if (/^3\.\s*FOOT\s+PLATE/i.test(first)) { kind = 'FPRV'; continue; }
+    if (T[1] && T[1][0] && /^Stations/i.test(T[1][0].t) && kind) {   // a grid: section, blocks, rows
+      const g = { kind, section: first, blocks: T[1].slice(1).map(c => c.t), rows: [] }; let month = null, left = 0;
+      for (const r of T.slice(2)) {
+        let cells = r; const mm = chartMonth(r[0].t);
+        if (mm) { month = mm; left = r[0].rs; cells = r.slice(1); } else if (left <= 0) month = null;
+        left--; if (!month || !cells.length) continue; months.add(month);
+        const per = []; cells.slice(1).forEach(c => { for (let k = 0; k < c.cs; k++) per.push(c.t); });
+        while (per.length < g.blocks.length) per.push('');
+        g.rows.push({ month, line: cells[0].t, cells: per.slice(0, g.blocks.length) });
+      }
+      out.grids.push(g); continue;
+    }
+    if (/Inspection\s*Planned\s*For/i.test(first)) {   // Feature | months
+      const hr = T.findIndex(r => /^Feature$/i.test(r[0].t)); if (hr < 0) continue; const ms = monthsOf(T[hr]);
+      T.slice(hr + 1).forEach(r => { const f = r[0].t.toUpperCase(); const o = out.planned[/POINT/.test(f) ? 'PXING' : /LEVEL/.test(f) ? 'LC' : /LWR/.test(f) ? 'LWR' : /CURVE/.test(f) ? 'CURVE' : f] = {}; r.forEach((c, i) => { if (ms[i]) { o[ms[i]] = num(c.t); months.add(ms[i]); } }); });
+      continue;
+    }
+    if (/^4\.\s*POINTS/i.test(first)) {
+      const hr = T.findIndex(r => /^Station$/i.test(r[0].t)); if (hr < 0) continue; const ms = monthsOf(T[hr]);
+      T.slice(hr + 1).forEach(r => { if (!r[0].t) return; const o = { station: r[0].t, main: num(r[1] && r[1].t) || 0, pass: num(r[2] && r[2].t) || 0, other: num(r[3] && r[3].t) || 0, done: {} }; r.forEach((c, i) => { if (ms[i]) { o.done[ms[i]] = num(c.t) || 0; months.add(ms[i]); } }); out.pxing.push(o); });
+      continue;
+    }
+    if (T.some(r => /^Total\s+(Level\s+Crossing|LWR|Curve)/i.test(r[0].t))) {   // LC / LWR / curve totals
+      let ms = [];
+      T.forEach(r => { if (/^Scope$/i.test(r[0].t)) { ms = monthsOf(r); return; } const m = /^Total\s+(Level\s+Crossing|LWR|Curve)\s*:?\s*(\d+)/i.exec(r[0].t); if (!m) return;
+        const k = /Level/i.test(m[1]) ? 'LC' : /LWR/i.test(m[1]) ? 'LWR' : 'CURVE'; const o = out.totals[k] = { total: +m[2], done: {} }; r.forEach((c, i) => { if (ms[i]) { o.done[ms[i]] = num(c.t) || 0; months.add(ms[i]); } }); });
+      continue;
+    }
+    if (/^8\.\s*NIGHT/i.test(first)) {   // night + other inspections
+      let ms = [], into = out.night;
+      T.forEach(r => { const t0 = r[0].t; if (/^9\.\s*OTHER/i.test(t0)) { into = out.other; return; } if (/^\d+\.\s/.test(t0)) return;
+        const mrow = monthsOf(r); if (mrow.some(Boolean)) { ms = mrow; return; } if (!t0 || r.length < 2) return;
+        const o = into[t0] = {}; r.forEach((c, i) => { if (ms[i] && c.t) o[ms[i]] = c.t; }); });
+      continue;
+    }
+    if (/^REMARKS$/i.test(first)) {
+      const ms = monthsOf(T[0]);
+      T.slice(1).forEach(r => { const t0 = r[0].t; const k = /Sr\.?\s*DEN/i.test(t0) ? 'srden' : /ADEN/i.test(t0) ? 'aden' : /SSE|SE's/i.test(t0) ? 'sse' : null; if (!k) return;
+        const o = out.remarks[k] = out.remarks[k] || {}; r.forEach((c, i) => { if (ms[i] && c.t) o[ms[i]] = c.t; }); });
+      continue;
+    }
+  }
+  out.months = [...months].sort();
+  return out;
+}
+
+// what the reports take from a chart: lagging.js chartFacts (also on the server through ENGINE)
+
+return { chartMonth, chartDates, isInspChartPage, inspChartFromPage };
 })();
 __m['shotocr.js'] = (function(){
 // Screenshot reader for TMS web report pages (OMS peaks comparative summary, OMS accn. peaks, IMR testing history …).
@@ -3508,10 +3658,11 @@ const {sigDistance} = __m['header.js'];
 const {decodePNG} = __m['png.js'];
 const {htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage} = __m['tmshtml.js'];
 const {dpcFromPage, isDpcPage, DPC_NAME} = __m['dpc.js'];   // [E] 20-Oct: Defects Pending for Compliance (K10)
-const {trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage} = __m['trcrep.js'];   // [E] 21-Oct: repeated UML peaks / CBML blocks (K8 / K9)
+const {trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage, omsRepFromPage, omsRepPeak, isOmsRepPage} = __m['trcrep.js'];
+const {inspChartFromPage, isInspChartPage} = __m['inspchart.js'];   // [E] 27-Oct: TMS's inspection chart (in-charges)   // [E] 27-Oct: + TMS's repeated OMS locations (K7)   // [E] 21-Oct: repeated UML peaks / CBML blocks (K8 / K9)
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME, trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage };
+const CORE = { inspChartFromPage, isInspChartPage, omsRepFromPage, omsRepPeak, isOmsRepPage, makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME, trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage };
 
 return { CORE };
 })();

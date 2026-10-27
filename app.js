@@ -468,13 +468,23 @@ function lagCard(u, L) {
     <div style="margin:4px 0 8px"></div>
     ${ks.length ? `<ul style="margin:0 0 6px 18px;padding:0">${ks.map(x => workLine(u, x)).join('')}</ul>` : '<div class="small">Nothing pending – all done.</div>'}
     ${u.causes && u.causes.notentered ? `<div class="small od">${u.causes.notentered} done in the app but not entered in TMS</div>` : ''}
+    ${lagChartHtml(u)}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn secondary sm" data-list="${esc(u.unit)}">Show the list</button><button class="btn primary sm" data-msg="${esc(u.unit)}">Chase message</button></div>
     <div data-det="${esc(u.unit)}"></div></div></div>`;
+}
+// [E] 27-Oct: TMS's inspection chart of the in-charge on the card – counts, night inspection, remarks, and trips the chart shows that
+// TMS Control's copy of the registers does not have yet (they are fetched again with the next set)
+function lagChartHtml(u) {
+  const v = u.chartView; if (!v) return '';
+  const miss = (u.chartMissing || []).slice(0, 12).map(x => `${x.t === 'RV' ? 'rear vehicle' : 'foot plate'} ${ddm(x.d)} ${esc(x.section)} ${esc(x.line)}`);
+  return `<div class="small" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px"><div class="muted">From TMS's inspection chart${v.at ? ' (' + esc(ddm(String(v.at).slice(0, 10))) + ')' : ''}</div>
+    ${v.notes.map(s => `<div>${esc(s)}</div>`).join('')}${miss.length ? `<details style="margin-top:2px"><summary class="muted">${(u.chartMissing || []).length} trip(s) in TMS's chart not yet in TMS Control's copy of the registers – not to be chased</summary>${miss.join('; ')}${(u.chartMissing || []).length > 12 ? ' …' : ''}. The daily register fetch brings them in; if one stays here for days, fetch "Inspection registers – full period" in the TMS Collector.</details>` : ''}</div>`;
 }
 function lagDetail(u, L) {
   const ks = u.kpis.filter(x => u.items.some(i => i.k === x.k && i.c !== 'lost'));
   const blocks = ks.map(x => { const it = u.items.filter(i => i.k === x.k && i.c !== 'lost');
     return `<div style="margin-top:12px"><div style="font-weight:600">${esc(LAG_WORK[x.k] || x.name || '')} <span class="small muted">· ${dueT(u, x.k)}${x.stale ? ` · <span class="od">TMS data of ${dmy(x.stale)} – refresh first</span>` : ''}</span></div>
+      ${u.chartView && (u.chartView[x.k] || []).length ? `<div class="small" style="margin:4px 0">Where, by TMS's inspection chart:<br>${u.chartView[x.k].map(s => esc(s.replace(/^•\s*/, ''))).join('<br>')}</div>` : ''}
       <div class="scroll"><table class="t compact"><thead><tr><th>What</th><th>Where</th><th>When</th><th>Why still pending</th><th>Who acts</th></tr></thead><tbody>${it.slice(0, 300).map(i => { const c = LAG_CAUSE[i.c] || [i.c, 'muted', '']; return `<tr${i.id ? ` data-job="${esc(i.id)}" style="cursor:pointer"` : ''}><td class="wrap">${esc(i.what)}</td><td class="wrap"><span class="loc" style="font-size:13px">${esc((i.label ? i.label + ' – ' : '') + (i.where || '') + (i.post ? ' (OHE ' + i.post + ')' : ''))}</span>${i.by ? `<div class="small muted">${esc(i.by)}</div>` : ''}</td><td class="nw small">${esc(i.when || (i.target ? 'target ' + dmy(i.target) : ''))}</td><td><span class="tag ${c[1] === 'crit' ? 't1' : c[1] === 'warn' ? 't2' : 't3'}">${esc(c[0])}</span>${i.since ? `<div class="small muted">${i.c === 'notentered' ? 'done ' + dmy(i.since) + ' (' + i.days + ' days)' : dmy(i.since)}</div>` : ''}</td><td class="small nw">${esc(c[2] === 'AEN' ? (u.aen || 'AEN') : c[2].replace(/^SSE/, 'SSE/' + (u.code || u.unit)))}</td></tr>`; }).join('')}</tbody></table></div>${it.length > 300 ? `<div class="pager">${it.length} items – first 300 shown</div>` : ''}</div>`; }).join('');
   const lostIt = u.items.filter(i => i.c === 'lost');
   return (blocks || '<div class="small muted" style="margin-top:8px">No single items behind this.</div>') + (lostIt.length ? `<details style="margin-top:10px"><summary class="small">Lost this month – repeated TRC locations (${lostIt.length})</summary><ul class="small">${lostIt.map(i => `<li>${esc(i.what)} – ${esc(i.where)}</li>`).join('')}</ul></details>` : '');
@@ -743,6 +753,10 @@ function kpiExplain(k, x) {
     + (x.miss ? `<h4 style="margin:10px 0 4px">Not covered in the two months</h4><div class="small">${esc(x.miss)}</div>` : '') + `<p class="small muted">Counted: push trolley (on foot where speed > 110 km/h) by the SSE in-charge, both months.</p>`;
   if (k === 'K10' && Array.isArray(x.byDate)) { const C = { PXING_ML: 'P&C ML', PXING_PRL: 'P&C PRL', PXING_JOINT_ML: 'Joint P&C ML', PXING_JOINT_PRL: 'Joint P&C PRL', LWR: 'LWR', SEJ: 'SEJ', BR: 'Bridge', LC: 'LC', CURVE: 'Curve', TRC: 'TRC', OMS: 'OMS', OTHER: 'Other inspections', LOOP: 'Loop line', LNA: 'LNA' };   // [E] 20-Oct
     return tbl(['Date (1st / 11th / 21st)', 'List used', 'Pending', 'More than 10 days', '%', 'Late by category'], x.byDate.map(b => [dmy(b.date), b.src || '', b.open, b.late, pct(b.pct), Object.entries(b.lateByCat || {}).map(([c, n]) => `${C[c] || c} ${n}`).join(', ') || '–'])); }
+  if (k === 'K7' && Array.isArray(x.list)) {   // [E] 27-Oct: TMS's own list "Repeated locations having OMS Peaks" (dashboard)
+    return tbl(['Repeated OMS peak locations now', 'on the 1st of the month before'], [[x.cur, x.prev == null ? 'not collected' : x.prev]]) + list('On TMS\'s list', x.list, x.cur)
+      + (x.atRisk ? `<p class="small od">At risk – the count on the 1st of the month before was not collected, so the reduction cannot be worked out here. TMS's own mark decides.</p>` : '')
+      + `<p class="small muted">From TMS's dashboard list "Repeated Locations Having OMS Peaks" (TMS Collector, daily; TMS shows it only as on the day). None on the list = full marks.</p>`; }
   if ((k === 'K8' || k === 'K9') && Array.isArray(x.list)) { const w = k === 'K8' ? 'Repeated UML peak locations' : 'Repeated CBML blocks';   // [E] 21-Oct: TMS's own lists (dashboard)
     return tbl([w + ' now', 'a month earlier'], [[x.cur, x.prev == null ? 'not known' : x.prev]]) + list('On TMS\'s list', x.list, x.cur)
       + `<p class="small muted">From TMS's dashboard lists "${k === 'K8' ? 'Repeated UML Peaks' : 'Repeated Blocks having CBML'}" (TMS Collector, daily). None on the list = full marks; this is how TMS gave its September marks.</p>`; }
