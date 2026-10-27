@@ -21,16 +21,35 @@ function fetchT(url, opt, ms) { return new Promise((res, rej) => { const c = new
 let NET = { ok: true, since: null };
 function setNet(ok, cachedAt) {
   NET.ok = ok; const b = $('netbar'); if (!b) return;
-  if (ok) { b.classList.add('hidden'); return; }
+  if (ok) { if (!b.dataset.saved) b.classList.add('hidden'); return; }   // [E] 27-Oct: the "saved copy – updating" bar stays until the answers are in
+  b.style.cssText = ''; delete b.dataset.saved;
   b.classList.remove('hidden'); b.textContent = navigator.onLine === false ? `No signal – showing data saved on this phone${cachedAt ? ' (' + String(cachedAt).replace('T', ' ').slice(0, 16) + ')' : ''}. Work records are kept and sent when signal returns.` : `Server not reachable – showing saved data${cachedAt ? ' (' + String(cachedAt).replace('T', ' ').slice(0, 16) + ')' : ''}.`;
 }
+// [E] 27-Oct-2026 SPEED (user: "the server is slow … not like polished software"):
+//  • timings: every call's total time on this device and the server's own part (answer.perf) – Settings → Speed;
+//  • the same request already on its way is shared (start-up asked "bootstrap" twice);
+//  • opt.swr(fresh): the copy saved on this phone is shown AT ONCE, the server is asked in the background and swr() gets the new
+//    answer (the page is redrawn – see softRender); opt.fresh: "Refresh" – the server works it out live, not from its prepared copy.
+const PERF = (() => { try { return JSON.parse(localStorage.getItem('tmsc.perf') || '{}'); } catch (e) { return {}; } })();
+function perfNote(fn, ms, srv, prep) { const o = PERF[fn] = PERF[fn] || { n: 0, sum: 0, srv: 0, max: 0, last: 0, prep: 0 }; o.n++; o.sum += ms; o.srv += srv || 0; o.max = Math.max(o.max, ms); o.last = ms; if (prep) o.prep++; o.at = new Date().toISOString(); try { localStorage.setItem('tmsc.perf', JSON.stringify(PERF)); } catch (e) { } }
+window.TMSC_PERF = () => PERF;
+const INFLIGHT = {};
 async function call(fn, args, opt = {}) {
-  const body = JSON.stringify({ t: TOKEN, k: TOKEN ? '' : KEY, d: DEV, ua: UA, fn, args: args || {} });
   const ck = opt.cache ? 'c:' + fn + ':' + JSON.stringify(args || {}) : null;
-  let r;
+  if (opt.swr && ck) {   // the saved copy now, the server's answer when it comes
+    const c = await ST.get('kv', ck).catch(() => null);
+    if (c) { call(fn, args, Object.assign({}, opt, { swr: null })).then(d => opt.swr(d), e => { if (e && e.access) return; console.warn('background refresh of ' + fn, e); }); return Object.assign(c.data && typeof c.data === 'object' ? c.data : {}, { __savedAt: c.at }); }
+  }
+  const fk = fn + ':' + JSON.stringify(args || {}) + (opt.fresh ? ':fresh' : '');
+  if (INFLIGHT[fk]) return INFLIGHT[fk];
+  const p = callNet(fn, args, opt, ck); INFLIGHT[fk] = p; p.then(() => { delete INFLIGHT[fk]; }, () => { delete INFLIGHT[fk]; }); return p;
+}
+async function callNet(fn, args, opt, ck) {
+  const body = JSON.stringify(Object.assign({ t: TOKEN, k: TOKEN ? '' : KEY, d: DEV, ua: UA, fn, args: args || {} }, opt.fresh ? { fresh: true } : {}));
+  let r; const t0 = Date.now();
   try {
     const res = await fetchT(CFG.API, { method: 'POST', body, headers: { 'Content-Type': 'text/plain;charset=utf-8' }, redirect: 'follow' }, opt.timeout || 120000);
-    r = await res.json();
+    r = await res.json(); if (r && r.ok) perfNote(fn, Date.now() - t0, r.perf ? r.perf.ms : 0, r.perf && r.perf.prep);
   } catch (e) {
     if (ck) { const c = await ST.get('kv', ck).catch(() => null); if (c) { setNet(false, c.at); return c.data; } }
     if (e && e.message === 'timeout') throw { error: 'The server is still working on this (no answer in ' + Math.round((opt.timeout || 120000) / 1000) + ' s). Open Upload history in a few minutes to see whether it finished before trying again.', timeout: true };
@@ -47,6 +66,10 @@ function signinWrap(inner) {
   return A ? `<div class="signin"><img class="slogo" src="${A.logo}" alt=""><h1>${A.name}</h1><div class="shi">${A.nameHi}</div><div class="sorg">${A.org} · ${A.orgHi}</div>${inner}<div class="creditcard">${UI.credit({ br: true, full: true })}</div></div>` : inner;
 }
 function denied(msg, pending, pend) {
+  // [E] 27-Oct: the server refused this phone – nothing saved is drawn any more, and the saved server copies are cleared (unsent work
+  // records stay); the saved copy shown at start-up (speed) never outlives a refusal
+  if (window.__DENIED && !pending) return;   // the first refusal's message stays (later calls only say "signed out")
+  window.__DENIED = true; ST.clear('kv').catch(() => { });
   $('rail').classList.add('hidden'); $('boot').classList.add('hidden'); $('banner').innerHTML = '';
   if (pending && pend) { waitScreen(pend, null); return; }   // [E] 23-Oct: personal link on a further phone – QR + code for the AEN / admin
   const m = esc(String(msg).replace(/^ACCESS(_PENDING)?:\s*/, ''));
@@ -183,7 +206,12 @@ async function boot() {
   if (INV) { inviteScreen(INV); return; }   // [E] 23-Oct: invite link / QR
   if (!TOKEN && !KEY) { joinScreen(); return; }
   try {
-    S.B = await call('bootstrap', {}, { cache: true });
+    // [E] 27-Oct: the saved start-up copy at once; the server's answer (which also checks this phone's access) is asked now and every
+    // other request waits for it (loadAll) – so a refused phone gets exactly one, the right, message
+    const savedB = await ST.get('kv', 'c:bootstrap:{}').catch(() => null);
+    const netB = call('bootstrap', {}, { cache: true });
+    S.Bnet = netB.then(B => { S.B = Object.assign(S.B || {}, B); delete S.B.__savedAt; S.Bat = Date.now(); return B; }); S.Bnet.catch(() => { });
+    S.B = savedB && savedB.data ? Object.assign({}, savedB.data, { __savedAt: savedB.at }) : await S.Bnet;
     const u = S.B.user; $('who').classList.remove('hidden'); $('whoRole').textContent = u.RoleName; $('whoName').textContent = u.Name; $('whoScope').textContent = u.Scope ? '· ' + u.Scope : '';
     fillUnits();
     $('selUnit').onchange = () => { S.unit = $('selUnit').value; render(); };
@@ -192,9 +220,11 @@ async function boot() {
     // [C] 22-Oct: staff who run the TMS Collector (Users → "May upload collected TMS data") get the upload page too
     if (role() !== 'ADMIN' && String(u.CanUpload || '').toLowerCase() === 'yes' && NAVS[role()] && !NAVS[role()].some(x => x[0] === 'upload')) NAVS[role()] = NAVS[role()].concat([['#Data'], ['upload', 'Upload data']]);
     S.view = (NAVS[role()] || NAVS.VIEWER)[0][0];
+    if (window.__DENIED) return;   // [E] 27-Oct: refused meanwhile
     $('rail').classList.remove('hidden');
     if (role() === 'ADMIN' || String(u.CanUpload || '').toLowerCase() === 'yes') await loadAdmin();   // [C] 22-Oct: + staff who may upload
     await loadAll();
+    if (window.__DENIED) return;   // [E] 27-Oct
     if (window.TMSC_FIELD) window.TMSC_FIELD.start();
   } catch (e) { if (!e.access) { $('boot').innerHTML = `<div class="denied"><h2>Could not load</h2><p>${esc(e.error || e)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`; } }
 }
@@ -213,19 +243,39 @@ function fillUnits() {
   $('selUnit').value = S.unit;
   $('railUnitWrap').classList.toggle('hidden', units.length < 2 && (role() === 'SSE' || role() === 'JE'));
 }
-async function loadAll() {
+// [E] 27-Oct: the saved copy of jobs / KPI / start-up / TRC is drawn at once (with "Saved copy of hh:mm – updating…"); the server's
+// answers replace it as soon as all have come (softRender). "Refresh" (fresh) asks the server to work everything out live.
+async function loadAll(fresh) {
   $('btnReload').disabled = true;
+  const wantTrc = ['SRDENC', 'ADMIN', 'VIEWER', 'SRDEN'].includes(role());
+  const net = async () => { const B = !fresh && S.Bnet ? await S.Bnet : await call('bootstrap', {}, { cache: true, fresh }); S.Bnet = null;   // access checked first (start-up answer)
+    return Promise.all([call('jobs', {}, { cache: true, fresh }), call('kpi', {}, { cache: true, fresh }), Promise.resolve(B), wantTrc ? call('trc', {}, { cache: true, fresh }) : Promise.resolve(null)]); };
+  const apply = ([jobs, kpi, B, trc], saved) => { S.B = Object.assign(S.B || {}, B); delete S.B.__savedAt; fillUnits(); S.jobs = jobs; S.kpi = kpi; if (trc) S.trc = trc; savedBar(saved); };
   try {
-    const [jobs, kpi, B] = await Promise.all([call('jobs', {}, { cache: true }), call('kpi', {}, { cache: true }), call('bootstrap', {}, { cache: true })]);
-    S.B = Object.assign(S.B, B); fillUnits();
-    S.jobs = jobs; S.kpi = kpi;
-    if (['SRDENC', 'ADMIN', 'VIEWER', 'SRDEN'].includes(role())) S.trc = await call('trc', {}, { cache: true });
-    if (window.TMSC_FIELD) await window.TMSC_FIELD.loadRecords();
-    $('boot').classList.add('hidden'); render();
-  } catch (e) { if (!e.access) fail(e); }
+    let shown = false;
+    if (!fresh) {   // the copies saved on this phone, if every one is there
+      const cs = await Promise.all(['jobs', 'kpi', 'bootstrap'].concat(wantTrc ? ['trc'] : []).map(f => ST.get('kv', 'c:' + f + ':{}').catch(() => null)));
+      if (cs.every(Boolean) && !window.__DENIED) { apply([cs[0].data, cs[1].data, cs[2].data, wantTrc ? cs[3].data : null], cs.map(c => c.at).sort()[0]); if (window.TMSC_FIELD) await window.TMSC_FIELD.loadRecords(); $('boot').classList.add('hidden'); render(); shown = true; $('btnReload').disabled = false; }
+    }
+    const got = await net(); apply(got, null);
+    if (window.TMSC_FIELD && !shown) await window.TMSC_FIELD.loadRecords();
+    $('boot').classList.add('hidden'); if (shown) softRender(); else render();
+  } catch (e) { savedBar(null); if (!e.access) fail(e); }
   $('btnReload').disabled = false;
 }
-$('btnReload').onclick = () => { LAG = { d: null, at: 0, p: null }; PLN = {}; loadAll(); };   // [E] 23-Oct: Refresh also asks for the lagging units again
+// the bar under the top: the page shows the copy saved on this phone while the server's answer is on its way
+function savedBar(at) { const b = $('netbar'); if (!b || !NET.ok) return; if (!at) { if (b.dataset.saved) { b.classList.add('hidden'); delete b.dataset.saved; } return; }
+  b.dataset.saved = '1'; b.classList.remove('hidden'); b.style.background = '#eef3fb'; b.style.color = '#1d3f73'; b.style.borderBottomColor = '#c9d8ef';
+  b.textContent = `Showing the copy saved on this phone (${String(at).replace('T', ' ').slice(5, 16).replace(/^(\d\d)-(\d\d)/, '$2-$1')}) – updating…`; }
+// redraw with the newer answer – not while someone is typing or a window is open (then a button offers it)
+function softRender() {
+  const a = document.activeElement; const busy = !$('modal').classList.contains('hidden') || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && $('views').contains(a));
+  if (!busy) { const y = window.scrollY; render(); window.scrollTo(0, y); return; }
+  const b = $('netbar'); if (!b) return; b.classList.remove('hidden'); b.dataset.saved = '1'; b.innerHTML = 'Newer figures have arrived. <button class="btn secondary sm" id="btnSoft">Show them</button>';
+  $('btnSoft').onclick = () => { savedBar(null); render(); };
+}
+window.TMSC.softRender = softRender;
+$('btnReload').onclick = () => { LAG = { d: null, at: 0, p: null, fresh: true }; PLN = {}; loadAll(true); };   // [E] 23-Oct: Refresh also asks for the lagging units again; [E] 27-Oct: live, not prepared
 if (window.UI) { $('btnReload').innerHTML = UI.svg('refresh') + `<span class="tl">${UI.t('Refresh')}</span>`; $('btnReload').setAttribute('aria-label', 'Refresh'); $('btnHelp').innerHTML = UI.svg('help') + `<span class="tl">${UI.t('Help')}</span>`; $('btnHelp').setAttribute('aria-label', 'Help'); }
 $('btnHelp').onclick = () => modal((window.UI ? UI.about() + '<hr style="border:0;border-top:1px solid var(--line);margin:16px 0">' : '') + helpHtml());
 window.addEventListener('online', () => { setNet(true); if (window.TMSC_FIELD) window.TMSC_FIELD.flush(); });
@@ -260,7 +310,7 @@ function nav() {
   $('nav').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.view = b.dataset.k; S.f = {}; S.sel = new Set(); render(); window.scrollTo(0, 0); };
 }
 function render() {
-  if (!S.B) return; nav(); banner();
+  if (!S.B || window.__DENIED) return; nav(); banner();
   const v = VIEWS[S.view] || VIEWS.jobs; $('views').innerHTML = `<div class="view on" id="v_${S.view}"></div>`;
   try { const r = v($('v_' + S.view)); if (r && r.catch) r.catch(e => fail(e)); } catch (e) { console.error(e); $('v_' + S.view).innerHTML = `<div class="empty">Error: ${esc(e.message)}</div>`; }
 }
@@ -478,12 +528,13 @@ function lagChartHtml(u) {
   const v = u.chartView; if (!v) return '';
   const miss = (u.chartMissing || []).slice(0, 12).map(x => `${x.t === 'RV' ? 'rear vehicle' : 'foot plate'} ${ddm(x.d)} ${esc(x.section)} ${esc(x.line)}`);
   return `<div class="small" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px"><div class="muted">From TMS's inspection chart${v.at ? ' (' + esc(ddm(String(v.at).slice(0, 10))) + ')' : ''}</div>
-    ${v.notes.map(s => `<div>${esc(s)}</div>`).join('')}${miss.length ? `<details style="margin-top:2px"><summary class="muted">${(u.chartMissing || []).length} trip(s) in TMS's chart not yet in TMS Control's copy of the registers – not to be chased</summary>${miss.join('; ')}${(u.chartMissing || []).length > 12 ? ' …' : ''}. The daily register fetch brings them in; if one stays here for days, fetch "Inspection registers – full period" in the TMS Collector.</details>` : ''}</div>`;
+    ${v.notes.map(s => `<div>${esc(s)}</div>`).join('')}${miss.length ? `<details style="margin-top:2px"><summary class="muted">${(u.chartMissing || []).length} trip(s) in TMS's chart not yet in TMS Control's copy of the registers – not to be chased</summary>${miss.join('; ')}${(u.chartMissing || []).length > 12 ? ' …' : ''}. The daily register fetch brings them in; if one stays here for days, fetch "Inspection registers – full period" in the TMS Collector.</details>` : ''}${(u.k3notes || []).length ? `<details style="margin-top:2px"><summary class="muted">Push trolley / on foot: ${u.k3notes.length} difference(s) between TMS's chart and TMS Control's register copy</summary>${u.k3notes.map(s => `<div>${esc(s)}</div>`).join('')}</details>` : ''}</div>`;   // [E] 27-Oct
 }
 function lagDetail(u, L) {
   const ks = u.kpis.filter(x => u.items.some(i => i.k === x.k && i.c !== 'lost'));
   const blocks = ks.map(x => { const it = u.items.filter(i => i.k === x.k && i.c !== 'lost');
     return `<div style="margin-top:12px"><div style="font-weight:600">${esc(LAG_WORK[x.k] || x.name || '')} <span class="small muted">· ${dueT(u, x.k)}${x.stale ? ` · <span class="od">TMS data of ${dmy(x.stale)} – refresh first</span>` : ''}</span></div>
+      ${x.k === 'K3' && x.field && !(x.stake > 0) ? `<div class="small muted" style="margin:4px 0">Marks not at risk (TMS counts parallel lines together), but these lines are not inspected – listed line by line from TMS Control's copy of the registers, checked with TMS's inspection chart.</div>` : ''}
       ${u.chartView && (u.chartView[x.k] || []).length ? `<div class="small" style="margin:4px 0">Where, by TMS's inspection chart:<br>${u.chartView[x.k].map(s => esc(s.replace(/^•\s*/, ''))).join('<br>')}</div>` : ''}
       <div class="scroll"><table class="t compact"><thead><tr><th>What</th><th>Where</th><th>When</th><th>Why still pending</th><th>Who acts</th></tr></thead><tbody>${it.slice(0, 300).map(i => { const c = LAG_CAUSE[i.c] || [i.c, 'muted', '']; return `<tr${i.id ? ` data-job="${esc(i.id)}" style="cursor:pointer"` : ''}><td class="wrap">${esc(i.what)}</td><td class="wrap"><span class="loc" style="font-size:13px">${esc((i.label ? i.label + ' – ' : '') + (i.where || '') + (i.post ? ' (OHE ' + i.post + ')' : ''))}</span>${i.by ? `<div class="small muted">${esc(i.by)}</div>` : ''}</td><td class="nw small">${esc(i.when || (i.target ? 'target ' + dmy(i.target) : ''))}</td><td><span class="tag ${c[1] === 'crit' ? 't1' : c[1] === 'warn' ? 't2' : 't3'}">${esc(c[0])}</span>${i.since ? `<div class="small muted">${i.c === 'notentered' ? 'done ' + dmy(i.since) + ' (' + i.days + ' days)' : dmy(i.since)}</div>` : ''}</td><td class="small nw">${esc(c[2] === 'AEN' ? (u.aen || 'AEN') : c[2].replace(/^SSE/, 'SSE/' + (u.code || u.unit)))}</td></tr>`; }).join('')}</tbody></table></div>${it.length > 300 ? `<div class="pager">${it.length} items – first 300 shown</div>` : ''}</div>`; }).join('');
   const lostIt = u.items.filter(i => i.c === 'lost');
@@ -497,10 +548,14 @@ function wireLag(el, L) {
 }
 // the server needs ~35 s for this list – one call shared by every render, kept 10 min; Refresh asks again
 let LAG = { d: null, at: 0, p: null };
-function lagFetch() { if (LAG.d && Date.now() - LAG.at < 600000) return Promise.resolve(LAG.d); if (!LAG.p) LAG.p = call('lagging', {}, { cache: true, timeout: 240000 }).then(d => { LAG = { d, at: Date.now(), p: null }; return d; }, e => { LAG.p = null; throw e; }); return LAG.p; }
+// [E] 27-Oct: the saved copy at once when there is one (the server's answer redraws the page when it comes); the server itself now
+// answers from its prepared copy (about a second) unless something changed since the last recalculation
+function lagFetch() { if (LAG.d && (LAG.d.__savedAt || Date.now() - LAG.at < 600000)) return Promise.resolve(LAG.d); if (!LAG.p) { const fresh = !!LAG.fresh;
+  LAG.p = call('lagging', {}, { cache: true, timeout: 240000, fresh, swr: fresh ? null : d => { LAG = { d, at: Date.now(), p: null }; savedBar(null); if (S.view === 'lag' || S.view === 'position') softRender(); } })
+    .then(d => { LAG = { d, at: d && d.__savedAt ? 0 : Date.now(), p: null }; if (d && d.__savedAt) savedBar(d.__savedAt); return d; }, e => { LAG.p = null; throw e; }); } return LAG.p; }
 async function lagLoad(el) {
-  if (LAG.d && Date.now() - LAG.at < 600000) return LAG.d;
-  el.innerHTML = '<div class="empty">Working out the lagging units – the server needs about half a minute…</div>';
+  if (LAG.d && (LAG.d.__savedAt || Date.now() - LAG.at < 600000)) return LAG.d;
+  el.innerHTML = '<div class="empty">Loading the lagging units…</div>';
   try { return await lagFetch(); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.error || e)}</div>`; return null; }
 }
 function fetchedHtml(L) {

@@ -305,7 +305,7 @@ async function runUpload() {
   if (SH.list.some(x => x.status === 'reading')) { toast('Screenshots are still being read – wait a moment', true); return; }
   const unchecked = shots.filter(x => !x.checked || !x.section || !x.line);
   if (unchecked.length) { toast(`${unchecked.length} screenshot(s) not checked yet. Click "Check" on each (or remove it with ✕), then upload.`, true); openManual(); $('shotList').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-  if (!U.files.length && !shots.length && !W.sets.length && !W.pages.length && !W.usfd.length) { toast('Select files first', true); return; }
+  if (!U.files.length && !shots.length && !W.sets.length && !W.pages.length && !W.usfd.length) { if (W.runId) { collectNothing(); return; } toast('Select files first', true); return; }   // [C] 27-Oct: a collector run says why instead of a bare toast
   U.running = true; $('btnGo').disabled = true; U.log = []; const t0 = Date.now();
   try { await doUpload(t0); } finally { U.running = false; const b = $('btnGo'); if (b) b.disabled = false; if (P.timer) { clearInterval(P.timer); P.timer = null; } }
 }
@@ -721,7 +721,9 @@ async function addCollected(items) {
       if (it.type === 'inspChart') {   // [C] 27-Oct: TMS Inspection Chart of every SSE/P.WAY in-charge (for [E]) – parsed here, one call
         const recs = []; for (const c of it.charts || []) { const chart = C.inspChartFromPage(c.html || ''); if (!chart) { W.notes.push(`${it.name}: the chart of ${c.designation || c.roleId} could not be read – left out`); continue; } recs.push({ roleId: c.roleId, designation: c.designation, level: 2, chart }); }
         const mon = d => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+String(d || '').slice(5, 7) - 1] || ''; const yr = String(it.to || '').slice(0, 4);
-        if (recs.length) W.sets.push({ kind: 'inspChart', records: recs, scope: { division: true }, asOn: S.B.today, file: it.name, icLine: `Inspection chart – ${recs.length} in-charge(s), ${mon(it.from)}–${mon(it.to)} ${yr}` }); continue;
+        if (recs.length) W.sets.push({ kind: 'inspChart', records: recs, scope: { division: true }, asOn: S.B.today, file: it.name, icLine: `Inspection chart – ${recs.length} in-charge(s), ${mon(it.from)}–${mon(it.to)} ${yr}` });
+        else W.notes.push(`${it.name || 'Inspection chart'}: ${(it.charts || []).length ? 'no in-charge\'s chart could be read' : 'no charts came from TMS'} – nothing sent; fetch "Inspection chart now" again in the TMS Collector`);   // [C] 27-Oct
+        continue;
       }
       if (it.type === 'omsRep') {   // [C] 27-Oct: TMS dashboard "Repeated Locations Having OMS Peaks" (K7, for [E]) – three lists, one call, sent even when empty (an empty list closes the items)
         const pg = [[12, it.html12], [15, it.html15], [20, it.html20]]; const wrong = pg.filter(([p, h]) => C.omsRepPeak(h || '') !== p);
@@ -737,11 +739,22 @@ async function addCollected(items) {
       if (it.type === 'jurisdictionTms') { const recs = jurTmsRecords(it); if (recs.some(r => r.rowType === 'stretch')) W.sets.push({ kind: 'tmsJurisdiction', records: recs, scope: { division: true }, asOn: it.asOn || S.B.today, file: it.name }); else W.notes.push(`${it.name}: no jurisdiction rows`); continue; }
       if (it.type === 'gmt' || it.type === 'tmsChart' || it.health) { W.notes.push(`${it.name || it.type}: kept for track health – not read yet`); continue; }   // [C] 16-Oct: issue 16 (a)(b), never sent to the server
       if (it.type === 'official') { const r = C.parseKpiSheet('official', C.rowsFromPage(it.html), ''); if (r && r.records.length && r.records[0].unit) { r.file = it.name; W.sets.push(r); } else W.notes.push(`${it.name}: score page not recognised`); continue; }
+      W.notes.push(`${it.name || it.type}: this TMS Control page does not know '${it.type}' – press Ctrl+Shift+R and send again`);   // [C] 27-Oct: never skipped silently (e.g. a page opened before the push)
     } catch (e) { W.notes.push(`${it.name || it.type}: could not read – ${e.message || e}`); }
   }
   if (hist.length) { const seen = new Set(); W.sets.push({ kind: 'usfdHist', records: hist.filter(r => !seen.has(r.key) && seen.add(r.key)), scope: {}, file: 'USFD testing history (TMS Collector)' }); }
   if (files.length) await addFilesZ(files);
   drawQueue();
+}
+function collectNothing() {   // [C] 27-Oct: a collector run with nothing left to upload – show every note and tell the collector why
+  const notes = W.notes.length ? W.notes.slice() : ['the collected item(s) held nothing TMS Control can upload'];
+  for (const n of notes) plog('TMS Collector: ' + n);
+  const unknown = notes.find(n => /does not know '/.test(n));
+  if (unknown) {
+    plog('Nothing uploaded – press Ctrl+Shift+R on this page; the collector then hands the reports over again.'); toast(unknown, true);
+    window.postMessage({ __tmsc: 'waiting', runId: W.runId, why: unknown }, location.origin);
+    W.runId = null; W.sets = []; W.pages = []; W.usfd = []; W.usfdLines = []; W.notes = [];
+  } else { plog('Nothing uploaded: ' + notes[notes.length - 1]); toast('Nothing to upload – ' + notes[0], true); collectDone(false); }
 }
 function collectDone(ok) {
   if (!W.runId) return;
@@ -830,6 +843,7 @@ V.settings = async el => {
       + fold('Audit against TMS – trips, field days, pending defects per unit <span class="muted small">(read only)</span>', `<div id="audw"><p class="small">Opens the check (about a minute on the live server).</p><button class="btn sm secondary" id="audGo">Run the audit</button></div>`)   // [E] 20-Oct
       + fold('Line by line – foot plate / trolley as the manual monitoring sheet counts <span class="muted small">(read only, with the trips behind every line)</span>', `<div id="lcw"><p class="small">For every PWI: lines in the jurisdiction, lines fully covered by foot plate / rear vehicle 1st–15th and 16th–end, and by push trolley / on foot (two months, line by line) – each line with the km still missing and the trips that covered it. TMS's own marks count % km short (KPI-2 line-wise, KPI-3 section-wise); both are shown.</p><button class="btn sm secondary" id="lcGo">Show line by line</button></div>`)   // [E] 21-Oct
       + fold('Export for other programs – read only <span class="muted small">(e.g. AEN Morning Position)</span>', `<div id="expw"><p class="small">After every recalculation TMS Control makes one JSON snapshot (KPI marks and shortfalls, inspections due / overdue, foot plate and trolley km, defects crossing 10 days – by AEN). Another program reads it with an <b>export key</b>; the key opens only this snapshot and can write nothing. The key is shown once – keep it in that program only, never on GitHub or in a message group.</p><div id="expS" class="small muted">Loading…</div><p style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn sm secondary" id="expNew">Make a new key</button><button class="btn sm ghost" id="expOff">Revoke the key</button><button class="btn sm ghost" id="expBuild">Make the snapshot now</button></p><div id="expK"></div></div>`)   // [E] 25-Oct
+      + fold('Speed – how long each page waits for the server <span class="muted small">(read only)</span>', `<div id="spdw"><p class="small">Opens the timings.</p></div>`)   // [E] 27-Oct
       + fold('Version check – push.bat, Recalculate, collector <span class="muted small" id="vchkS">(checking…)</span>', `<div id="vchkw"><p class="small">Checking…</p></div>`)   // [E] 17-Oct; opens by itself when something is to do
       + grp.filter(g => g.rows.length).map(g => fold(`${esc(g.t)} <span class="muted small">(${g.rows.length})</span>`, setTable(g.rows))).join('')
       + fold('Target days by job type', `<div class="scroll"><table class="t"><thead><tr><th>Job type</th><th>SSE to complete (days)</th><th>AEN to approve (days)</th><th>Photo required</th><th>Closes by TMS data</th></tr></thead><tbody>${st.targets.map(t => `<tr><td>${esc(t.Description)}<div class="small muted">${esc(t.JobType)} · ${esc(t.KPI)}</div></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="SSEDays" value="${esc(t.SSEDays)}" style="width:80px"></td><td><input type="number" data-t="${esc(t.JobType)}" data-f="AENDays" value="${esc(t.AENDays)}" style="width:80px"></td><td><select data-t="${esc(t.JobType)}" data-f="PhotoRequired"><option ${t.PhotoRequired === 'Yes' ? 'selected' : ''}>Yes</option><option ${t.PhotoRequired !== 'Yes' ? 'selected' : ''}>No</option></select></td><td class="small">${esc(t.ClosedByData)}</td></tr>`).join('')}</tbody></table></div>`)
@@ -839,6 +853,7 @@ V.settings = async el => {
       + fold('Close old jobs (clean start)', `<div id="csw"><p class="small">Loading…</p></div>`)
       + fold('Jurisdiction: TMS compared with the file', `<div id="jcw">${jurCompareHtml(st.jurCompare, st.jurSource)}</div>`);
     cleanStartPanel();
+    { const sw = $('spdw'); const d = sw && sw.closest('details'); if (d) d.addEventListener('toggle', () => { if (d.open) speedPanel(); }); }   // [E] 27-Oct
     const vfill = fresh => window.versionCheck && versionCheck(fresh).then(r => { const w = $('vchkw'); if (!w) return; const n = r.filter(x => x.ok === false).length;
       w.innerHTML = versionHtml(r) + '<div class="row"><button class="btn sm secondary" id="vchkR">Check again</button></div>'; $('vchkR').onclick = () => { $('vchkS').textContent = '(checking…)'; vfill(true); };
       const sm = $('vchkS'); if (sm) sm.innerHTML = n ? `<b style="color:var(--crit)">(${n} to do)</b>` : '(all in order)'; if (n) w.closest('details').open = true; }).catch(() => { });   // [E] 17-Oct
@@ -911,4 +926,23 @@ V.uploads = async el => {
   try { const L = (await call('uploads')).reverse(); $('uph').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>When</th><th>By</th><th>Report</th><th>File</th><th>As on</th><th>Records</th><th>New</th><th>Closed</th><th>Note</th></tr></thead><tbody>${L.map(u => `<tr><td class="nw">${esc(String(u.When).replace('T', ' '))}</td><td>${esc(u.By)}</td><td>${esc(KIND_NAME[u.Kind] || u.Kind)}</td><td class="small wrap">${esc(u.File)}</td><td class="nw">${dmy(u.AsOn)}</td><td class="n">${u.Records}</td><td class="n">${u.New}</td><td class="n">${u.Closed}</td><td class="small wrap">${esc(u.Note)}</td></tr>`).join('')}</tbody></table></div>`; } catch (e) { fail(e); }
 };
 if (S.B) T.render();
+// [E] 27-Oct-2026: Settings → Speed. Server: time per call (average / slowest / last), how much of it was reading sheets, how often it
+// came from a prepared copy; the prepared copies (current or out of date). This device: total time per call and the server's part –
+// the rest is the network and Google starting the server program.
+const SPEED_NAME = { bootstrap: 'Start-up (user, units, reminders)', jobs: 'Jobs', kpi: 'KPI marks', lagging: 'Lagging units / My position', trc: 'TRC', inspPlan: 'Inspections due (TMS plan)', settings: 'Settings', records: 'Work records', speed: 'This panel' };
+async function speedPanel() {
+  const w = $('spdw'); if (!w) return; w.innerHTML = '<p class="small">Loading…</p>';
+  let sp = null; try { sp = await call('speed'); } catch (e) { w.innerHTML = `<p class="small">${esc(e.error || e)}</p>`; return; }
+  const sec = ms => ms == null ? '—' : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + ' s';
+  const P = (sp.perf && sp.perf.f) || {}; const D = (window.TMSC_PERF && window.TMSC_PERF()) || {};
+  const names = [...new Set(Object.keys(P).concat(Object.keys(D)))].filter(k => (P[k] && P[k].n) || (D[k] && D[k].n)).sort((a, b) => ((D[b] ? D[b].sum / D[b].n : 0) - (D[a] ? D[a].sum / D[a].n : 0)) || ((P[b] ? P[b].sum / P[b].n : 0) - (P[a] ? P[a].sum / P[a].n : 0)));
+  const rows = names.map(k => { const p = P[k], d = D[k]; return `<tr><td>${esc(SPEED_NAME[k] || k)}</td><td class="nw">${p ? sec(p.sum / p.n) : '—'}</td><td class="nw">${p ? sec(p.max) : '—'}</td><td class="nw">${p ? Math.round(p.read / Math.max(1, p.sum) * 100) + ' %' : '—'}</td><td class="nw">${p ? Math.round(p.prep / p.n * 100) + ' %' : '—'}</td><td class="nw">${p ? p.n : '—'}</td><td class="nw">${d ? sec(d.sum / d.n) : '—'}</td><td class="nw">${d ? sec(Math.max(0, (d.sum - d.srv) / d.n)) : '—'}</td></tr>`; }).join('');
+  const PN = { lag: 'Lagging units / My position', kpi: 'KPI marks', jobs: 'Jobs', trc: 'TRC', boot: 'Start-up lists' };
+  const prep = Object.keys(sp.prepared || {}).map(k => { const x = sp.prepared[k]; return `<tr><td>${esc(PN[k] || k)}</td><td>${x ? (x.current ? '<span class="tag t4">current</span>' : '<span class="tag t3">out of date – the next request works it out live</span>') : '<span class="muted">not made yet</span>'}</td><td class="nw">${x ? esc(String(x.made).replace('T', ' ').slice(5, 16)) : ''}</td><td class="nw">${x ? x.kB + ' kB' : ''}</td></tr>`; }).join('');
+  w.innerHTML = `<p class="small">Server times since ${esc(sp.perf && sp.perf.since ? String(sp.perf.since).replace('T', ' ').slice(0, 16) : '—')} (kept up to 6 hours). "Reading sheets" = the share of the server's time spent reading the Google Sheet; "From prepared copy" = answered from the copy worked out after the last recalculation (exact while nothing has changed since). "Network + Google start-up" = this device's wait beyond the server's own work.</p>
+    <div class="scroll"><table class="t compact"><thead><tr><th>Request</th><th>Server average</th><th>Slowest</th><th>Reading sheets</th><th>From prepared copy</th><th>Calls</th><th>This device – total</th><th>Network + Google start-up</th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="muted">No calls recorded yet.</td></tr>'}</tbody></table></div>
+    <h4 style="margin:12px 0 4px">Prepared copies</h4><div class="scroll"><table class="t compact"><thead><tr><th>Page</th><th>State</th><th>Made</th><th>Size</th></tr></thead><tbody>${prep}</tbody></table></div>
+    <div class="row" style="margin-top:8px"><button class="btn sm secondary" id="spdR">Check again</button></div>`;
+  $('spdR').onclick = speedPanel;
+}
 })();

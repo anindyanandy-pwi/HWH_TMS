@@ -2892,7 +2892,39 @@ function lineStatus(unitObj, insp, ym, opts = {}) {
 }
 const kmRuns = ks => { const out = []; let a = null, p = null; for (const k of ks) { if (a == null) { a = p = k; continue; } if (k === p + 1) { p = k; continue; } out.push(a === p ? String(a) : a + '–' + p); a = p = k; } if (a != null) out.push(a === p ? String(a) : a + '–' + p); return out.join(', '); };
 
-return { KPI, marks, reduction, desigUnit, isInCharge, buildJurisdiction, unitForLocation, routeSections, inspectorMatches, coverage, monthRange, prevMonth, kpiK2, kpiK3, kpiK16, day, addMonths, addDays, daysBetween, nextFirst, K1_DEFAULTS, assetDue, k1Overdue, kpiK1, kpiFracture, openOn, pendingDays, kpiK10, kpiK10avg, kpiK10mix, kpiK12, kpiK14, kpiK15, omsRepeated, kpiK7, kpiTRCrep, kpiTRC, kpiK11, kpiK13, tmsUnit, tmsLine, compareJurisdiction, lineStatus, normUnit };
+// ---------- [E] 27-Oct-2026: K3 FIELD LIST – line by line, from TMS Control's own copy of the inspection registers ----------
+// User (27-Oct, BZLE): the marks count (section-km, parallel lines together – matched TMS's marks) said "nothing due" while DN
+// KGLE–175/0 had no push trolley / on-foot trip in Sep–Oct. The field must be told each LINE that is still uninspected; the marks
+// forecast stays on the section basis. Same window and rule as the marks (previous + this month; on foot counts only where the
+// sectional speed is above 110 km/h), same officials (opts.who). Only the unit's own lines and km (its jurisdiction segs).
+// Returns { from, to, lines:[{ section, line, speed, km:[{k, w}] not covered, foot:[k] covered on foot only (≤110 km/h), done:[{k, date}] }] }
+function k3Field(unitObj, insp, ym, opts = {}) {
+  const from = monthRange(prevMonth(ym, 1)).from, to = monthRange(ym).to;
+  const accept = (i, seg) => i.type === 'TROLLEY' || (i.type === 'FOOT' && (opts.footOK || (seg.speed != null && seg.speed > 110)));
+  const base = { who: opts.who, endExclusive: opts.endExclusive, lineWise: true };
+  const evA = new Map(); const ok = coverage(unitObj, insp, from, to, { ...base, types: ['FOOT', 'TROLLEY'], accept, evidence: evA });
+  const foot = coverage(unitObj, insp, from, to, { ...base, types: ['FOOT'] });
+  const footMiss = new Set(foot.missing.map(x => x.section + '|' + x.line + '|' + x.km));
+  const lines = []; const at = {};
+  for (const s of unitObj.segs) { const key = s.section + '|' + s.line; if (!at[key]) { at[key] = { section: s.section, line: s.line, speed: null, w: {}, km: [], foot: [], done: [] }; lines.push(at[key]); }
+    const L = at[key]; if (s.speed != null) L.speed = Math.max(L.speed || 0, s.speed);
+    for (const k of kmSet(s.a, s.b)) { const len = Math.max(0, Math.min(s.b, (k + 1) * 1000) - Math.max(s.a, k * 1000)) / 1000; L.w[k] = Math.max(L.w[k] || 0, len); } }
+  const miss = new Set(ok.missing.map(x => x.section + '|' + x.line + '|' + x.km));
+  for (const L of lines) {
+    const ev = (evA.get(L.section + '|' + L.line) || []).map(e => e.i);
+    Object.keys(L.w).map(Number).sort((a, b) => a - b).forEach(k => {
+      const id = L.section + '|' + L.line + '|' + k;
+      if (miss.has(id)) { if (!footMiss.has(id)) { L.foot.push(k); L.footKm = (L.footKm || 0) + L.w[k]; } else L.km.push({ k, w: L.w[k] }); return; }
+      // covered by our register: the first accepted trip over this km (for the cross-check with TMS's chart)
+      const t = ev.filter(i => accept(i, { speed: L.speed }) && Math.min(i.kmA, i.kmB) <= k && Math.max(i.kmA, i.kmB) >= k).sort((p, q) => p.date < q.date ? -1 : 1)[0];
+      L.done.push({ k, date: t ? t.date : '', a: t ? Math.min(t.kmA, t.kmB) * 1000 : null, b: t ? Math.max(t.kmA, t.kmB) * 1000 : null });
+    });
+    L.kmTotal = Math.round(Object.values(L.w).reduce((a, x) => a + x, 0) * 100) / 100; delete L.w;
+  }
+  return { from, to, lines };
+}
+
+return { KPI, marks, reduction, desigUnit, isInCharge, buildJurisdiction, unitForLocation, routeSections, inspectorMatches, coverage, monthRange, prevMonth, kpiK2, kpiK3, kpiK16, day, addMonths, addDays, daysBetween, nextFirst, K1_DEFAULTS, assetDue, k1Overdue, kpiK1, kpiFracture, openOn, pendingDays, kpiK10, kpiK10avg, kpiK10mix, kpiK12, kpiK14, kpiK15, omsRepeated, kpiK7, kpiTRCrep, kpiTRC, kpiK11, kpiK13, tmsUnit, tmsLine, compareJurisdiction, lineStatus, k3Field, normUnit };
 })();
 __m['dpc.js'] = (function(){
 // [E] 20-Oct-2026: TMS dashboard item 7 "Defects Pending for Compliance" – the detail page
