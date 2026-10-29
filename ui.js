@@ -58,8 +58,7 @@ const IC = {
   phone: 'M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM11 18h2', moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
   sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4', auto: 'M12 3a9 9 0 1 0 0 18V3z M12 21a9 9 0 0 0 0-18', refresh: 'M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6', help: 'M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18z'
 };
-IC.pulse = 'M22 12h-4l-3 9L9 3l-3 9H2';   // [H] 19-Oct: track health icon
-const NAVIC = { health: 'pulse', healthline: 'pulse', healthdata: 'up', /* [H] 19-Oct */ insp: 'clock', work: 'work', records: 'doc', position: 'chart', done: 'done', review: 'check', kpi: 'grid', overview: 'grid', urgent: 'alert', jobs: 'list', chronic: 'pin', plan: 'truck', forecast: 'trend', upload: 'up', users: 'users', settings: 'gear', uploads: 'history', phones: 'phone' };
+const NAVIC = { insp: 'clock', work: 'work', records: 'doc', position: 'chart', done: 'done', review: 'check', kpi: 'grid', overview: 'grid', urgent: 'alert', jobs: 'list', chronic: 'pin', plan: 'truck', forecast: 'trend', upload: 'up', users: 'users', settings: 'gear', uploads: 'history', phones: 'phone' };
 const svg = (k, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${IC[k] || IC.list}"></path></svg>`;
 NAVIC.access = 'phone'; HI['Sign-in approvals'] = 'प्रवेश स्वीकृति'; NAVIC.lag = 'alert'; HI['Lagging units'] = 'पिछड़ी इकाइयाँ'; HI['What is still pending before'] = 'इससे पहले क्या शेष है';   // [E] 22-Oct: Lagging units
 const navIcon = key => svg(NAVIC[key] || 'list', 'ic');

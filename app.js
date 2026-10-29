@@ -110,8 +110,6 @@ const isOpen = j => OPEN.includes(j.Status);
 const inUnit = x => S.unit === '__all' || x.Unit === S.unit;
 const role = () => S.B.user.Role;
 const recMode = j => (S.B.recordModes || {})[j.Type] || 'full';
-window.TMSC.NAVS = NAVS;   // [H] 19-Oct: health.js adds its menu entries (Track health)
-window.TMSC.versionBanner = () => versionBanner();   // [H] 19-Oct: the admin's Version check banner also on Track health (the admin's first screen)
 window.TMSC.isOpen = isOpen; window.TMSC.inUnit = inUnit; window.TMSC.role = () => role(); window.TMSC.recMode = recMode; window.TMSC.OPEN = OPEN;
 
 // ---------- [E] 23-Oct: SECURE SIGN-IN – the plain link gives a request (QR + 6-digit code) that the AEN (own JEs / SSEs) or the admin
