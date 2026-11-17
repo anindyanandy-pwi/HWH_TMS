@@ -1886,7 +1886,19 @@ function formKind(pages) {
   if (pages.slice(0, 2).some(pg => pg.slice(0, 3).some(r => r.cells.some(c => TITLE.test(c.txt))))) return null;   // FP / RV / on foot / trolley register
   if (pages.slice(0, 2).some(pg => pg.slice(0, 8).some(isOtherHead))) return 'OTHER';
   if (pages.slice(0, 3).some(genericPage)) return 'GENERIC';
+  if (tableTitle(pages) && pages.some(pg => pg.some(dateRow))) return 'TABLE';   // [E] 17-Nov: any other "… INSPECTION REGISTER" with rows dated in the first column
   return null;
+}
+// [E] 17-Nov (user: "all kinds of inspection must be taken into account without fail" – K16 counts every inspection the in-charge
+// records): registers laid out as a table – a title "<FEATURE> INSPECTION REGISTER", asset fields at the top of each page, then one row
+// per inspection with the date in the first column, the entry date and "name (designation)" in the last columns (seen: Glued Joint)
+const TABLE_TITLE = /^([A-Z][A-Z0-9 /&().-]{2,60}?)\s+INSPECTION\s+REGISTER$/i;
+function tableTitle(pages) { for (const pg of pages.slice(0, 2)) for (const r of pg.slice(0, 4)) for (const c of r.cells) { const m = c.txt.trim().match(TABLE_TITLE); if (m) return m[1].trim(); } return null; }
+const dateRow = r => { const cs = r.cells.filter(c => c.txt.trim()); return cs.length >= 2 && cs[0].x < 80 && /^\d\d\/\d\d\/\d{4}$/.test(cs[0].txt.trim()); };
+// a register that holds no inspection: TMS's "No Data Available" / "No Inspection Found", or a page without any text
+function isEmptyRegister(pages) {
+  const t = pages.map(pg => pg.map(r => txt(r).join(' ')).join(' ')).join(' ').trim();
+  return !t || /No Data Available|No Inspection Found/i.test(t) && !pages.some(pg => pg.some(dateRow));
 }
 const D = /(\d\d)\/(\d\d)\/(\d{4})/;
 const dmy = s => { const m = String(s || '').match(D); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
@@ -1918,6 +1930,31 @@ function rec(type, f) {
 function parseForms(pages, kind) {
   if (kind === 'GENERIC') { const out = []; pages.forEach(pg => { if (!genericPage(pg)) return; try { out.push(...P.GENERIC(pg)); } catch (e) { } }); const seen = new Set(); return out.filter(r => r.date && !seen.has(r.key) && seen.add(r.key)); }
   const all = []; pages.forEach(pg => pg.forEach(r => all.push(r)));
+  if (kind === 'TABLE') {   // [E] 17-Nov: the asset fields hold until the next page header; every dated row is one inspection
+    const title = tableTitle(pages) || 'Inspection'; const type = title.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '');
+    const out = []; let head = { route: '', line: '', asset: '', km: null }, auth = null, entryX = null;
+    pages.forEach(pg => pg.forEach((r, i) => {
+      const cs = r.cells.filter(c => c.txt.trim()); if (!cs.length) return;
+      if (cs.some(c => TABLE_TITLE.test(c.txt.trim()))) { head = { route: '', line: '', asset: '', km: null }; return; }
+      const f = (re) => { for (let k = 0; k < cs.length; k++) { const t = cs[k].txt.trim(); if (re.test(t)) { const rest = clean(t.replace(re, '')); return rest || (cs[k + 1] ? clean(cs[k + 1].txt) : ''); } } return null; };
+      const sec = f(/^(Section\/Station|Section|Station)\s*:?/i); if (sec != null) head.route = sec;
+      const ln = f(/^(Loop Line|Line(\/Loop Line(\/Cross Over)?)?)\s*:?/i); if (ln != null) head.line = ln;
+      const an = f(/^(Asset (Name|No\.?)|[A-Za-z ]+ at PXing No\.?)\s*:?/i); if (an != null) head.asset = an;
+      const lc = f(/^Location\s*:?/i); if (lc != null) head.km = kmOf(lc);
+      const ah = cs.find(c => /^(Inspecting Authority|Inspection Authority|Inspecting Official)$/i.test(c.txt.trim())); if (ah) auth = ah.x;
+      const eh = cs.find(c => /^Entry Date$/i.test(c.txt.trim())); if (eh) entryX = eh.x;
+      if (!dateRow(r)) return;
+      const date = dmy(cs[0].txt); const ent = cs.slice(1).find(c => /^\d\d\/\d\d\/\d{4}\b/.test(c.txt.trim()) && (entryX == null || Math.abs(c.x - entryX) < 60));
+      // "name (designation)" in the authority column: the name often sits on the row above, the designation on the row below
+      const near = [pg[i - 2], pg[i - 1], r, pg[i + 1], pg[i + 2]].filter(Boolean); let desig = '', name = '';
+      for (const rr of near) for (const c of rr.cells) { const t = c.txt.trim(); if (!t || (auth != null && c.x < auth - 40)) continue; const m = t.match(/^(.*?)\s*\(([A-Z][^()]*(?:\([^()]*\))?[^()]*\/[^()]*(?:\([^()]*\))?)\)\s*$/i); if (m && !desig) { desig = m[2]; if (m[1]) name = m[1]; } }
+      // or "Name -" / "Name - DESIG" with the designation on the same or the next row (seen: Sand Hump "Partha De - SSE/PW/GRAE(Sec.)")
+      if (!desig) for (const rr of near) for (const c of rr.cells) { const t = c.txt.trim(); if (!t || (auth != null && c.x < auth - 60)) continue; const m = t.match(/^(?:(.*?)\s+-\s*)?((?:SSE|JE|ADEN|AEN|DEN|Sr\.?\s*DEN|Sr\.?\s*ADEN)\s*\/\S.*)$/i); if (m && !desig) { desig = m[2]; if (m[1]) name = m[1]; } else if (!name && /^[A-Za-z .]+\s*-$/.test(t)) name = t.replace(/\s*-$/, ''); }
+      if (!name) for (const rr of [pg[i - 1], r]) { if (!rr) continue; for (const c of rr.cells) { const t = c.txt.trim(); if (t && auth != null && c.x >= auth - 40 && /^[A-Za-z .]+$/.test(t)) name = t; } }
+      out.push(rec(type, { asset: head.asset ? title + ' ' + head.asset : '', subType: title.replace(/\b\w+/g, w => w[0].toUpperCase() + w.slice(1).toLowerCase()) + (head.asset ? ' ' + head.asset : ''), route: head.route, line: head.line, kmA: head.km, date, official: name, desig, entry: ent ? dmy(ent.txt) : null }));
+    }));
+    const seen = new Set(); return out.filter(r => r.date && !seen.has(r.key) && seen.add(r.key));
+  }
   if (kind === 'OTHER') {   // one record per titled block
     const out = []; const heads = []; all.forEach((r, i) => { if (isOtherHead(r)) heads.push(i); });
     heads.forEach((h, n) => { const rows = all.slice(Math.max(0, h - 1), n + 1 < heads.length ? heads[n + 1] - 1 : all.length); try { out.push(...P.OTHER(rows)); } catch (e) { } });
@@ -2030,7 +2067,7 @@ const P = {
 };
 
 
-return { isRegister, parseRegister, FORM_NAME, normDesig, formKind };
+return { isRegister, parseRegister, FORM_NAME, isEmptyRegister, normDesig, formKind };
 })();
 __m['tmsreports.js'] = (function(){
 // TMS KPI report parsers (Excel exports and pasted web tables). Each returns {kind, asOn, scope, records}.
@@ -3689,7 +3726,7 @@ const {lineDisplay, sectionCode, sectionName, lineKey} = __m['names.js'];
 const {readXLS} = __m['xls.js'];
 const {readXLSX} = __m['xlsx.js'];
 const {pdfLines, pdfPages} = __m['pdftext.js'];
-const {isRegister, parseRegister, FORM_NAME, formKind} = __m['registers.js'];
+const {isRegister, parseRegister, FORM_NAME, formKind, isEmptyRegister} = __m['registers.js'];
 const {unzip} = __m['zip.js'];
 const {classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest} = __m['tmsreports.js'];
 const {sigDistance} = __m['header.js'];
@@ -3700,7 +3737,7 @@ const {trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage, omsRepFromPage
 const {inspChartFromPage, isInspChartPage} = __m['inspchart.js'];   // [E] 27-Oct: TMS's inspection chart (in-charges)   // [E] 27-Oct: + TMS's repeated OMS locations (K7)   // [E] 21-Oct: repeated UML peaks / CBML blocks (K8 / K9)
 const {readShot, crossCheck, imageFromRGBA, imrRecords, omsRecords, learn: learnShot, parseRun, ShotTemplates, grey: greyShot} = __m['shots.js'];
 
-const CORE = { inspChartFromPage, isInspChartPage, omsRepFromPage, omsRepPeak, isOmsRepPage, makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME, trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage };
+const CORE = { inspChartFromPage, isInspChartPage, omsRepFromPage, omsRepPeak, isOmsRepPage, makeEngine, ingest, readTRCPage, emptyStore, analyse, dedupe, BANDS, buildWorkbook, jobKey, KINDS, classifySheet, parseSheet, classifyPdf, parsePdf, lineDisplay, sectionCode, sectionName, lineKey, readXLS, readXLSX, pdfLines, pdfPages, isRegister, parseRegister, FORM_NAME, formKind, isEmptyRegister, unzip, classifyKpiSheet, parseKpiSheet, tablesFromPaste, classifyPaste, parsePaste, weldDigest, sigDistance, readShot, imageFromRGBA, imrRecords, omsRecords, learnShot, parseRun, ShotTemplates, greyShot, decodePNG, crossCheck, htmlTables, htmlText, trcPageFromTables, isTrcKmPage, usfdDefectsFromPage, usfdHistFromPage, atWeldsFromPage, rowsFromPage, pendingIMR, ogSumFromPage, dpcFromPage, isDpcPage, DPC_NAME, trcRepFromPage, isTrcRepPage, trcRepKind, umlPendFromPage };
 
 return { CORE };
 })();

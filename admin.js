@@ -109,7 +109,6 @@ V.upload = async el => {
 function openManual() { const d = $('manual'); if (d && !d.open) { d.open = true; U.manualOpen = true; } }
 function plog(m) { U.log.push(m); const p = $('plog'); if (p) { p.textContent = U.log.join('\n'); p.scrollTop = p.scrollHeight; } if (W.runId) window.postMessage({ __tmsc: 'progress', runId: W.runId, line: String(m).trim() }, location.origin); }
 // asset registers TMS Control does not read (rail, sleeper, fastening … – hundreds of MB per run): never opened, never uploaded
-const READ_REG = /^InspRegister_(Foot_Plate|Night_Foot_Plate|Rear_Vehicle|Night_Rear|On_Foot|Trolley|Push_Trolley|Curve|Level_Crossing|LWR|Points_Crossing|Diamond|Of_USFD|USFD|SEJ|Switch_Expansion|Bridge|Other)/i;   // [E] 17-Nov: register types TMS Control reads
 const UNUSED_REG = /^AssetRegister_(RAIL|FASTENING|SLEEPER|RAIL_PAD|LINER|Welding_Team|LAND_BOUNDARY|DRAINAGE|EROSION|FORMATION|PROTECTION|WEAK|TUNNEL|TRACK_TYPE|BUFFER|SAND_HUMP|Steel_Channel)/i;
 const pause = () => new Promise(r => setTimeout(r, 0));   // lets the page breathe between large files
 function drawQueue() {
@@ -131,6 +130,7 @@ async function inspectFile(f) {
     if (ext === 'pdf') {
       if (f.size > 15e6) { lines.push('Very large PDF – will be skipped'); }
       else { const pages = await C.pdfPages(buf); if (C.isRegister(pages)) { const R = C.parseRegister(pages); ok = R.length > 0; blank = !R.length; lines.push(regText(pages, R)); }
+        else if (/^InspRegister_/i.test(f.name) && C.isEmptyRegister(pages)) { blank = true; lines.push('Inspection register with no inspections in this period ("No data available") – nothing to read'); }   // [E] 17-Nov
         else { const k = C.classifyPdf(await C.pdfLines(buf)); ok = !!k; use.trc = !!k; lines.push(k ? (C.KINDS[k] || k) + ' – used for the TRC analysis' : 'Not a TMS report this program knows'); } }
     } else {
       const wb = ext === 'xls' ? C.readXLS(buf) : await C.readXLSX(buf);
@@ -778,17 +778,19 @@ async function startCollected(m) {
   // [E] 17-Nov (the daily set waited for a click from 13-11 to 17-11, unnoticed): these never stop the automatic upload –
   //  · a recognised list with no rows (no overdue O&G / no locations for that SSE or section): uploaded as it is, an empty list is information;
   //  · a blank register form (no filled-in inspections);
-  //  · an inspection register of a type TMS Control does not read (ballast, rail, sleeper, fastening, glued joint, land boundary, sand hump,
-  //    track circuit …). A register of a type it DOES read (foot plate, rear vehicle, on foot, trolley, curve, LC, LWR, P&C, USFD …) that
-  //    is not recognised still stops the upload – that would lose K2 / K3 / field days.
+  //  · an inspection register that holds no inspection in the period (TMS: "No data available" / "No inspection found").
+  //  (user 17-Nov: "all kinds of inspection must be taken into account without fail") every register with inspections in it is read
+  //  (any "<feature> INSPECTION REGISTER" table – glued joint, sand hump … – counts for the field days); one that holds inspections but
+  //  cannot be read STOPS the upload and the admin is told at once (red banner) – never skipped.
   for (const f of U.files) if (f.__collector && f.__info && !f.__info.ok && !f.__info.unused) {
     if (f.__info.emptyList || f.__info.blank) f.__info.fine = true;   // still read and sent (an empty list closes what TMS no longer lists)
-    else if (/^InspRegister_/i.test(f.name) && !READ_REG.test(f.name)) { f.__info.unused = true; f.__info.lines = ['Inspection register of a type TMS Control does not read – skipped']; }
   }
   drawQueue();
   const bad = U.files.filter(f => f.__info && !f.__info.ok && !f.__info.unused && !f.__info.fine).length;
   if (W.auto && !bad && !SH.list.length) { plog('Everything recognised – uploading.'); runUpload(); }
-  else { const why = bad ? `${bad} file(s) not recognised` : SH.list.length ? 'screenshots in the list need checking' : 'automatic upload is off'; plog(`Check the list and click "Upload and recalculate" (${why}).`); toast('Collected reports are ready to upload – check the list', !!bad); window.postMessage({ __tmsc: 'waiting', runId: m.runId, why }, location.origin); }
+  else { const why = bad ? `${bad} file(s) not recognised` : SH.list.length ? 'screenshots in the list need checking' : 'automatic upload is off'; plog(`Check the list and click "Upload and recalculate" (${why}).`); toast('Collected reports are ready to upload – check the list', !!bad); window.postMessage({ __tmsc: 'waiting', runId: m.runId, why }, location.origin);
+    // [E] 17-Nov: a held collector run is told to the server at once – red admin banner on every page until an upload goes through
+    if (W.auto && bad) { const files = U.files.filter(f => f.__info && !f.__info.ok && !f.__info.unused && !f.__info.fine).map(f => f.name).slice(0, 20); call('uploadHeld', { why, files }).catch(() => {}); } }
 }
 window.addEventListener('message', e => {
   if (e.source !== window || !e.data || typeof e.data !== 'object') return;
