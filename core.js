@@ -2594,9 +2594,15 @@ function coverage(unitObj, inspections, from, to, opts = {}) {
     }
   }
   const missing = [...need.keys()].filter(k => !done.has(k)).map(k => { const [section, line, km] = k.split('|'); return { section, line, km: +km }; });
+  // [E] 02-Nov: opts.split110 (K3) – the part of the count on track above 110 km/h (where on foot also counts; each km takes the
+  // fastest of its segments, as the rule above does); additive, the totals are unchanged
+  const fastPart = () => { const F = k => { const s = need.get(k); return s && s.speed != null && s.speed > 110; }; const W = k => opts.measure === 'length' ? (wt.get(k) || 0) : 1;
+    const keys = [...need.keys()].filter(F), miss = keys.filter(k => !done.has(k)); const rd = v => Math.round(v * 100) / 100;
+    return { units: keys.length, missingUnits: miss.length, km: rd(keys.reduce((x, k) => x + W(k), 0)), kmMissing: rd(miss.reduce((x, k) => x + W(k), 0)),
+      missing: miss.map(k => { const [section, line, km] = k.split('|'); return { section, line, km: +km }; }) }; };
   if (opts.measure === 'length') { const W = k => wt.get(k) || 0; const tot = [...need.keys()].reduce((x, k) => x + W(k), 0), mis = [...need.keys()].filter(k => !done.has(k)).reduce((x, k) => x + W(k), 0);
-    return { total: need.size, covered: done.size, missing, pct: tot ? mis / tot * 100 : 0, km: Math.round(tot * 100) / 100, kmMissing: Math.round(mis * 100) / 100 }; }
-  return { total: need.size, covered: done.size, missing, pct: need.size ? missing.length / need.size * 100 : 0 };
+    const R = { total: need.size, covered: done.size, missing, pct: tot ? mis / tot * 100 : 0, km: Math.round(tot * 100) / 100, kmMissing: Math.round(mis * 100) / 100 }; if (opts.split110) R.fast = fastPart(); return R; }
+  const R = { total: need.size, covered: done.size, missing, pct: need.size ? missing.length / need.size * 100 : 0 }; if (opts.split110) R.fast = fastPart(); return R;
 }
 
 const pad = n => String(n).padStart(2, '0');
@@ -2632,7 +2638,7 @@ function kpiK2(unitObj, insp, ym, opts = {}) {
 function kpiK3(unitObj, insp, ym, opts = {}) {
   const from = monthRange(prevMonth(ym, 1)).from, to = monthRange(ym).to;
   const accept = (i, seg) => i.type === 'TROLLEY' || (i.type === 'FOOT' && (opts.footOK || (seg.speed != null && seg.speed > 110)));
-  const c = coverage(unitObj, insp, from, to, { ...opts, types: ['FOOT', 'TROLLEY'], accept });
+  const c = coverage(unitObj, insp, from, to, { ...opts, types: ['FOOT', 'TROLLEY'], accept, split110: true });   // [E] 02-Nov: + c.fast (above 110 km/h)
   const now = opts.asOf && opts.asOf < to ? opts.asOf : null;
   if (!now) return { value: c.pct, marks: marks('K3', c.pct), detail: { ...c, basis: `Two months ${dmyS(from)} to ${dmyS(to)} (over)` } };
   const el = dayCount(from, now), len = dayCount(from, to), v = paceShort(c, el, len);
@@ -2907,14 +2913,14 @@ function k3Field(unitObj, insp, ym, opts = {}) {
   const footMiss = new Set(foot.missing.map(x => x.section + '|' + x.line + '|' + x.km));
   const lines = []; const at = {};
   for (const s of unitObj.segs) { const key = s.section + '|' + s.line; if (!at[key]) { at[key] = { section: s.section, line: s.line, speed: null, w: {}, km: [], foot: [], done: [] }; lines.push(at[key]); }
-    const L = at[key]; if (s.speed != null) L.speed = Math.max(L.speed || 0, s.speed);
-    for (const k of kmSet(s.a, s.b)) { const len = Math.max(0, Math.min(s.b, (k + 1) * 1000) - Math.max(s.a, k * 1000)) / 1000; L.w[k] = Math.max(L.w[k] || 0, len); } }
+    const L = at[key]; if (s.speed != null) L.speed = Math.max(L.speed || 0, s.speed); L.sp = L.sp || {};
+    for (const k of kmSet(s.a, s.b)) { const len = Math.max(0, Math.min(s.b, (k + 1) * 1000) - Math.max(s.a, k * 1000)) / 1000; L.w[k] = Math.max(L.w[k] || 0, len); if (s.speed != null) L.sp[k] = Math.max(L.sp[k] || 0, s.speed); } }   // [E] 02-Nov: sp = sectional speed of each km of the line
   const miss = new Set(ok.missing.map(x => x.section + '|' + x.line + '|' + x.km));
   for (const L of lines) {
     const ev = (evA.get(L.section + '|' + L.line) || []).map(e => e.i);
     Object.keys(L.w).map(Number).sort((a, b) => a - b).forEach(k => {
       const id = L.section + '|' + L.line + '|' + k;
-      if (miss.has(id)) { if (!footMiss.has(id)) { L.foot.push(k); L.footKm = (L.footKm || 0) + L.w[k]; } else L.km.push({ k, w: L.w[k] }); return; }
+      if (miss.has(id)) { if (!footMiss.has(id)) { L.foot.push(k); L.footKm = (L.footKm || 0) + L.w[k]; (L.footW = L.footW || {})[k] = L.w[k]; } else L.km.push({ k, w: L.w[k] }); return; }
       // covered by our register: the first accepted trip over this km (for the cross-check with TMS's chart)
       const t = ev.filter(i => accept(i, { speed: L.speed }) && Math.min(i.kmA, i.kmB) <= k && Math.max(i.kmA, i.kmB) >= k).sort((p, q) => p.date < q.date ? -1 : 1)[0];
       L.done.push({ k, date: t ? t.date : '', a: t ? Math.min(t.kmA, t.kmB) * 1000 : null, b: t ? Math.max(t.kmA, t.kmB) * 1000 : null });

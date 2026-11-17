@@ -668,7 +668,7 @@ VIEWS.overview = el => {
   const J = S.jobs.filter(inUnit); const t = S.B.today; const m0 = t.slice(0, 8) + '01';
   const groups = {}; const unitMeta = Object.fromEntries(S.B.units.map(u => [u.unit, u]));
   for (const j of J) { const g = level === 'Unit' ? j.Unit : level === 'AEN' ? (j.AEN || unitMeta[j.Unit]?.aen) : (j.SrDEN || unitMeta[j.Unit]?.srden); const o = groups[g || '—'] = groups[g || '—'] || { open: 0, od: 0, p1: 0, wait: 0, odA: 0, done: 0, gone: 0, units: new Set() }; o.units.add(j.Unit); if (isOpen(j)) o.open++; if (gone(j)) o.gone++; if (j.Overdue === 'SSE') o.od++; if (isOpen(j) && +j.Priority === 1) o.p1++; if (j.Status === 'Done' || j.Status === 'With SSE') o.wait++; if (j.Overdue === 'AEN') o.odA++; if ((j.Status === 'Approved' || j.Status === 'Verified' || (j.Status === 'Closed' && j.ApprovedOn)) && String(j.ApprovedOn || j.ClosedOn) >= m0) o.done++; }
-  const kp = {}; for (const k of (S.kpi?.kpi || [])) if (k.Basis === 'This month' && inUnit(k)) { const g = level === 'Unit' ? k.Unit : level === 'AEN' ? unitMeta[k.Unit]?.aen : unitMeta[k.Unit]?.srden; (kp[g] = kp[g] || []).push(+k.Total || 0); }
+  const kp = {}; for (const k of (S.kpi?.kpi || [])) if (k.Basis === 'This month' && inUnit(k) && k === kpiRow(k.Unit)) {   /* [E] 17-Nov: latest month only */ const g = level === 'Unit' ? k.Unit : level === 'AEN' ? unitMeta[k.Unit]?.aen : unitMeta[k.Unit]?.srden; (kp[g] = kp[g] || []).push(+k.Total || 0); }
   const avg = a => a && a.length ? (a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : '—';
   const tot = Object.values(groups).reduce((a, o) => { for (const k of ['open', 'od', 'p1', 'wait', 'odA', 'done', 'gone']) a[k] = (a[k] || 0) + o[k]; return a; }, {});
   // redesign 16-Oct: division average ring + number cards, then one card per Sr DEN / AEN / unit with its own ring
@@ -770,7 +770,11 @@ function matchStrip() {
 }
 VIEWS.kpi = el => {
   const all = (S.kpi?.kpi || []).filter(k => inUnit(k)); const basis = S.basis;
-  const rows = all.filter(k => k.Basis === basis); const off = {}; for (const o of (S.kpi?.official || [])) if (!off[o.Unit] || o.ProcDate > off[o.Unit].ProcDate) off[o.Unit] = o;
+  // [E] 17-Nov: one row per unit – the latest month of this basis (an older month's row stood next to it and a click opened the older one)
+  const latest = {}; for (const k of all) if (k.Basis === basis && (!latest[k.Unit] || String(k.Period) > String(latest[k.Unit].Period))) latest[k.Unit] = k;
+  const rows = all.filter(k => latest[k.Unit] === k); const off = {}; for (const o of (S.kpi?.official || [])) if (!off[o.Unit] || o.ProcDate > off[o.Unit].ProcDate) off[o.Unit] = o;
+  // [E] 17-Nov: last month is compared with TMS's marks OF THAT MONTH only (processed in the month after); September's marks stood against October
+  if (basis === 'Last month') for (const u of Object.keys(off)) { const r = latest[u]; const o = r && offFor(r); if (o) off[u] = o; else delete off[u]; }
   const K = Object.keys(S.B.kpiNames);
   const cls = (k, v) => v === '' || v == null ? 'mkn' : +v >= KMAX(k) ? 'mk5' : +v >= KMAX(k) - 1 ? 'mk4' : +v >= 3 ? 'mk3' : +v >= 2 ? 'mk2' : 'mk0';
   el.innerHTML = pageHead('KPI by unit', basis === 'This month' ? 'FORECAST for this month – the marks expected on the coming 1st. Periods not yet started are left out; a fortnight / month still running is judged on the work so far at the present pace (click a cell: "Based on"). Open the jobs to save the marks.' : 'LAST MONTH – the score for the month that is over, as calculated – compare with the official TMS score (red outline = differs)',
@@ -821,9 +825,12 @@ function kpiExplain(k, x) {
   const e = Object.entries(x || {}).filter(([, v]) => v != null && typeof v !== 'object');
   return e.length ? tbl(['Item', 'Value'], e.map(([a, v]) => [a.replace(/([A-Z])/g, ' $1').toLowerCase(), v])) : '';
 }
+/** [E] 17-Nov: TMS's official marks for the month of a KPI row (TMS processes a month in the month after, e.g. October on 03-11) */
+function offFor(r) { const p = String(r.Period || '').slice(0, 7); if (!/^\d{4}-\d{2}$/.test(p)) return null; const [y, m] = p.split('-').map(Number); const nx = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+  return (S.kpi?.official || []).filter(o => o.Unit === r.Unit && String(o.ProcDate).replace(/^'/, '').slice(0, 7) === nx).sort((a, b) => String(b.ProcDate).localeCompare(String(a.ProcDate)))[0] || null; }
 function kpiCell(unit, k, r) {
   const d = (r.Detail || {})[k] || {}; const notes = (S.kpi.notes || []).filter(n => n.Unit === unit && n.KPI === k).slice(-5).reverse();
-  const off = (S.kpi.official || []).filter(o => o.Unit === unit).sort((a, b) => String(b.ProcDate).localeCompare(String(a.ProcDate)))[0];
+  const off = r.Basis === 'Last month' ? offFor(r) : (S.kpi.official || []).filter(o => o.Unit === unit).sort((a, b) => String(b.ProcDate).localeCompare(String(a.ProcDate)))[0];   // [E] 17-Nov: last month → that month's TMS marks
   const canNote = ['SSE', 'JE', 'AEN', 'SRDEN', 'SRDENC', 'ADMIN'].includes(role());
   const fc = r.Basis === 'This month' && d.b && /^Forecast/.test(d.b);
   const mt = matchOf(k);   // [E] 21-Oct: how far this KPI's rule agrees with TMS's own marks of the last scored month
