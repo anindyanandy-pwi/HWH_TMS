@@ -98,6 +98,7 @@ V.upload = async el => {
     // late: more than the expected interval since the last upload; empty: 0 records for a list that is never empty division-wide
     const maxDays = w => /daily/i.test(w) ? 2 : /twice a week/i.test(w) ? 4 : /weekly/i.test(w) ? 8 : /monthly/i.test(w) ? 35 : null;
     const age = d => d ? Math.floor((Date.parse(S.B.today) - Date.parse(String(d).slice(0, 10))) / 864e5) : null;
+    if (!$('chk')) return;   // [E] 17-Nov: the page was drawn again while the list was loading ("Cannot set properties of null") – the new drawing loads it itself
     $('chk').innerHTML = `<div class="scroll"><table class="t"><thead><tr><th>Report</th><th>Last arrived</th><th>Records</th></tr></thead><tbody>${st.map(r => {
       const a = age(r.last), m = maxDays(r.when); const late = r.last && m != null && a > m; const empty = r.last && +r.records === 0 && !/jurisdiction|Jurisdiction|official|fracture/.test(r.kind);
       const cls = !r.last ? 'od' : late || empty ? 'od' : '';
@@ -108,6 +109,7 @@ V.upload = async el => {
 function openManual() { const d = $('manual'); if (d && !d.open) { d.open = true; U.manualOpen = true; } }
 function plog(m) { U.log.push(m); const p = $('plog'); if (p) { p.textContent = U.log.join('\n'); p.scrollTop = p.scrollHeight; } if (W.runId) window.postMessage({ __tmsc: 'progress', runId: W.runId, line: String(m).trim() }, location.origin); }
 // asset registers TMS Control does not read (rail, sleeper, fastening … – hundreds of MB per run): never opened, never uploaded
+const READ_REG = /^InspRegister_(Foot_Plate|Night_Foot_Plate|Rear_Vehicle|Night_Rear|On_Foot|Trolley|Push_Trolley|Curve|Level_Crossing|LWR|Points_Crossing|Diamond|Of_USFD|USFD|SEJ|Switch_Expansion|Bridge|Other)/i;   // [E] 17-Nov: register types TMS Control reads
 const UNUSED_REG = /^AssetRegister_(RAIL|FASTENING|SLEEPER|RAIL_PAD|LINER|Welding_Team|LAND_BOUNDARY|DRAINAGE|EROSION|FORMATION|PROTECTION|WEAK|TUNNEL|TRACK_TYPE|BUFFER|SAND_HUMP|Steel_Channel)/i;
 const pause = () => new Promise(r => setTimeout(r, 0));   // lets the page breathe between large files
 function drawQueue() {
@@ -116,19 +118,19 @@ function drawQueue() {
   const sh = SH.list.filter(x => x.status === 'done'), un = sh.filter(x => !x.checked).length;
   const web = W.sets.length + W.pages.length + W.usfd.length;
   if (!U.files.length && !sh.length && !web) { q.innerHTML = '<div class="muted">Nothing selected yet.</div>'; return; }
-  const bad = docs.filter(f => f.__info && !f.__info.ok && !f.__info.unused).length;
+  const bad = docs.filter(f => f.__info && !f.__info.ok && !f.__info.unused && !f.__info.fine).length;
   // every report file is opened on this computer as soon as it is picked, so it is clear what will be taken from it before anything is uploaded
   q.innerHTML = `<div>${docs.length} report file(s), ${png} TRC page(s)${sh.length ? `, ${sh.length} screenshot(s)${un ? ` – <span class="od">${un} not checked yet</span>` : ' – checked'}` : ''}${bad ? ` · <span class="od">${bad} file(s) not recognised – they will be skipped</span>` : ''}</div>
     ${web ? webQueueHtml() : ''}${docs.length ? `<table class="t fileq"><tbody>${docs.map(f => `<tr class="${f.__info && !f.__info.ok && !f.__info.unused ? 'dbt' : ''}"><td class="small wrap">${esc(f.name)}</td><td class="small wrap">${f.__info ? f.__info.lines.map(l => esc(l)).join('<br>') : '<span class="muted">opening…</span>'}</td></tr>`).join('')}</tbody></table>` : ''}`;
 }
 // what the upload will take from one report file (read here, nothing is sent)
 async function inspectFile(f) {
-  const ext = f.name.split('.').pop().toLowerCase(), lines = []; let ok = false; const use = { geo: false, trc: false };
+  const ext = f.name.split('.').pop().toLowerCase(), lines = []; let ok = false, emptyList = false, blank = false; const use = { geo: false, trc: false };
   try {
     const buf = await f.arrayBuffer();
     if (ext === 'pdf') {
       if (f.size > 15e6) { lines.push('Very large PDF – will be skipped'); }
-      else { const pages = await C.pdfPages(buf); if (C.isRegister(pages)) { const R = C.parseRegister(pages); ok = R.length > 0; lines.push(regText(pages, R)); }
+      else { const pages = await C.pdfPages(buf); if (C.isRegister(pages)) { const R = C.parseRegister(pages); ok = R.length > 0; blank = !R.length; lines.push(regText(pages, R)); }
         else { const k = C.classifyPdf(await C.pdfLines(buf)); ok = !!k; use.trc = !!k; lines.push(k ? (C.KINDS[k] || k) + ' – used for the TRC analysis' : 'Not a TMS report this program knows'); } }
     } else {
       const wb = ext === 'xls' ? C.readXLS(buf) : await C.readXLSX(buf);
@@ -136,7 +138,7 @@ async function inspectFile(f) {
         const tag = wb.sheets.length > 1 ? `[${sh.name}] ` : '';
         const k = C.classifyKpiSheet(sh.rows, sh.name);
         if (k === 'jurisdiction') { ok = true; lines.push(tag + `Jurisdiction details – ${sh.rows.length - 1} rows`); continue; }
-        if (k) { const r = C.parseKpiSheet(k, sh.rows, sh.name); ok = ok || r.records.length > 0; lines.push(tag + `${KIND_NAME[k] || k} – ${r.records.length} rows${r.records.length ? '' : ' (no rows found – check the file)'}`); if (k !== 'weldReg' && k !== 'fpReg') continue; }
+        if (k) { const r = C.parseKpiSheet(k, sh.rows, sh.name); ok = ok || r.records.length > 0; if (!r.records.length) emptyList = true;   /* [E] 17-Nov: a recognised list with no rows (e.g. no overdue O&G for that SSE) */ lines.push(tag + `${KIND_NAME[k] || k} – ${r.records.length} rows${r.records.length ? '' : ' (no rows found – check the file)'}`); if (k !== 'weldReg' && k !== 'fpReg') continue; }
         const g = C.classifySheet(sh.rows, sh.name); if (g) { if (GEO_NAME[g]) use.geo = true; else use.trc = true; }
         if (g && !(k && (k === 'weldReg' || k === 'fpReg') && !GEO_NAME[g])) {
           const recs = C.parseSheet(g, sh.rows); const secs = new Set(recs.map(r => r.section).filter(Boolean));
@@ -148,7 +150,7 @@ async function inspectFile(f) {
   } catch (e) { lines.push('Could not open: ' + (e.message || e)); }
   // a weld / fish-plate register fetched by an older collector lacks the columns TMS Control needs: left out, with the remedy
   if (!ok && /^AssetRegister_(WELD|FISH_PLATE)/i.test(f.name)) { f.__info = { ok: false, unused: true, use, lines: [/WELD/i.test(f.name) ? 'Older weld register without the "Whether joggled" column – left out. Fetch it again with "Asset registers now" in the TMS Collector.' : 'Older fish-plate register without the needed columns – left out. Fetch it again with "Asset registers now" in the TMS Collector.'] }; drawQueue(); return; }
-  f.__info = { ok, lines, use }; drawQueue();
+  f.__info = { ok, lines, use, emptyList: !ok && emptyList, blank: !ok && blank }; drawQueue();
 }
 // e.g. "Curve inspection register – 203 inspections"; a blank form says so
 function regText(pages, R) {
@@ -773,8 +775,18 @@ async function startCollected(m) {
   // asset registers this program does not read (from an older collector) are skipped quietly instead of stopping the upload
   // only registers TMS Control really does not read are skipped quietly; an unread weld / fish plate / curve … register is a problem
   for (const f of U.files) if (f.__collector && f.__info && !f.__info.ok && UNUSED_REG.test(f.name)) { f.__info.unused = true; f.__info.lines = ['Asset register not used by TMS Control – skipped']; }
+  // [E] 17-Nov (the daily set waited for a click from 13-11 to 17-11, unnoticed): these never stop the automatic upload –
+  //  · a recognised list with no rows (no overdue O&G / no locations for that SSE or section): uploaded as it is, an empty list is information;
+  //  · a blank register form (no filled-in inspections);
+  //  · an inspection register of a type TMS Control does not read (ballast, rail, sleeper, fastening, glued joint, land boundary, sand hump,
+  //    track circuit …). A register of a type it DOES read (foot plate, rear vehicle, on foot, trolley, curve, LC, LWR, P&C, USFD …) that
+  //    is not recognised still stops the upload – that would lose K2 / K3 / field days.
+  for (const f of U.files) if (f.__collector && f.__info && !f.__info.ok && !f.__info.unused) {
+    if (f.__info.emptyList || f.__info.blank) f.__info.fine = true;   // still read and sent (an empty list closes what TMS no longer lists)
+    else if (/^InspRegister_/i.test(f.name) && !READ_REG.test(f.name)) { f.__info.unused = true; f.__info.lines = ['Inspection register of a type TMS Control does not read – skipped']; }
+  }
   drawQueue();
-  const bad = U.files.filter(f => f.__info && !f.__info.ok && !f.__info.unused).length;
+  const bad = U.files.filter(f => f.__info && !f.__info.ok && !f.__info.unused && !f.__info.fine).length;
   if (W.auto && !bad && !SH.list.length) { plog('Everything recognised – uploading.'); runUpload(); }
   else { const why = bad ? `${bad} file(s) not recognised` : SH.list.length ? 'screenshots in the list need checking' : 'automatic upload is off'; plog(`Check the list and click "Upload and recalculate" (${why}).`); toast('Collected reports are ready to upload – check the list', !!bad); window.postMessage({ __tmsc: 'waiting', runId: m.runId, why }, location.origin); }
 }
